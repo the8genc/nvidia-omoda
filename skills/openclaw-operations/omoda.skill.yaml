@@ -1,0 +1,79 @@
+# Operating the OpenClaw gateway itself, under the same taxonomy as everything else.
+#
+# This is the skill that closes the three layers. Paperclip's orchestration
+# (Layer 1) drives an agent runtime over the OpenClaw gateway protocol; the
+# gateway and its OpenShell sandbox are the enforcement (Layer 3). This manifest
+# is Layer 2 deciding which of the gateway's 171 methods an agent may reach, and
+# on what terms.
+#
+# The point worth noticing: the gateway's own admin surface is CRUD like anything
+# else. agents.list is a read. agents.create is a create. agents.delete is a
+# delete against a live agent runtime. There is no reason to govern a QuickBooks
+# invoice more carefully than the thing that can spawn agents on our hardware, so
+# the same two axes apply here without exception.
+#
+# Methods deliberately absent from this manifest, and therefore denied outright:
+# config.set, exec.approvals.set, device.token.*, and the pairing approvals. Those
+# are the gateway's self-protection surface and live on the prohibited list
+# (src/domain/prohibited.js), which has no approval path at all. A skill cannot
+# opt into them by declaring them, because prohibited is checked first.
+skill: openclaw-operations
+agent: operator
+description: Drive and inspect the OpenClaw gateway that contains our agents
+
+capabilities:
+  # --- reads: the whole inspection surface, unattended ---
+  - tool: openclaw.agents.list
+    verb: read
+    resource: gateway:agent
+    impact: []
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+  - tool: openclaw.cron.list
+    verb: read
+    resource: gateway:cron
+    impact: []
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+  - tool: openclaw.sessions.list
+    verb: read
+    resource: gateway:session
+    impact: []
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+  # --- consequential writes: real effects on shared hardware ---
+  # Scheduling work on a box another team shares is a reputational act: it runs
+  # under our name, on their machine, when nobody is watching.
+  - tool: openclaw.cron.add
+    verb: create
+    resource: gateway:cron
+    impact: [reputational]
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+  - tool: openclaw.cron.remove
+    verb: delete
+    resource: gateway:cron
+    impact: [reputational]
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+  # Spawning an agent is creating something that can act on its own.
+  - tool: openclaw.agents.create
+    verb: create
+    resource: gateway:agent
+    impact: [reputational]
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+  # Deleting a live agent runtime destroys work in flight. Legal is declared
+  # alongside reputational because a deleted agent takes its audit trail with it.
+  - tool: openclaw.agents.delete
+    verb: delete
+    resource: gateway:agent
+    impact: [reputational, legal]
+    egress: { host: host.openshell.internal, port: 18789, path: "/**" }
+
+filesystem:
+  read: []
+  write: []
+
+binaries:
+  - /usr/local/bin/node

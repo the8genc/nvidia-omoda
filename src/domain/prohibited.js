@@ -22,6 +22,34 @@ const POLICY_WEAKENERS = [
   "device_auth_disabled",
 ];
 
+/**
+ * The OpenClaw gateway's own control plane, reachable now that we are paired.
+ *
+ * These are the methods that would let the Broker dismantle, or hand away, the
+ * enforcement its own authority rests on: turning off the gateway's execution
+ * approvals, rewriting its config, rotating or revoking device tokens, or
+ * approving somebody else's device. An operator tap cannot authorise any of
+ * them, because a consent path that can disable the consent mechanism is a
+ * privilege escalation ladder rather than a control.
+ *
+ * Note what is NOT here: agents.create, cron.add, skills.upload. Those are
+ * ordinary consequential writes. They are dangerous, so they need a recorded
+ * decision; they are not self-referential, so a decision is sufficient.
+ */
+const GATEWAY_CONTROL_PLANE = [
+  "exec.approvals.set",
+  "exec.approvals.node.set",
+  "config.set",
+  "config.apply",
+  "config.patch",
+  "device.token.rotate",
+  "device.token.revoke",
+  "device.pair.approve",
+  "device.pair.remove",
+  "node.pair.approve",
+  "node.pair.remove",
+];
+
 export class Prohibited extends Error {
   constructor(rule, detail) {
     super(`prohibited: ${rule}${detail ? ` (${detail})` : ""}`);
@@ -82,7 +110,14 @@ export function prohibitedReason(action = {}) {
     }
   }
 
-  // 7: destructive git on refs we do not own.
+  // 7: the gateway's own control plane. Same clause as 6, one layer out: 6
+  // protects the OpenShell envelope, this protects the gateway that enforces it.
+  if (tool.startsWith("openclaw.")) {
+    const method = tool.slice("openclaw.".length);
+    if (GATEWAY_CONTROL_PLANE.includes(method)) return "gateway-self-protection";
+  }
+
+  // 8: destructive git on refs we do not own.
   if (tool === "git.push" || tool === "git.branch") {
     const ref = String(args.ref || args.branch || "");
     const force = Boolean(args.force);

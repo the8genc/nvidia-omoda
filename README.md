@@ -19,7 +19,8 @@ Built and deployed. Running on the box under systemd, not a laptop demo.
 | Nemotron | local vLLM, NVFP4, 64k context, **choosing tools in the live path** |
 | Operator channel | Telegram, real approvals recorded end to end |
 | Layer 1 seam | paired to the OpenClaw gateway, protocol 4, 171 methods |
-| Tests | **161 passing**, 94.36% line coverage, compliance gate green |
+| All three layers | **running together against the live gateway**, `npm run demo:layers` |
+| Tests | **177 passing**, 94%+ line coverage, compliance gate green |
 
 Measured, including where it fell short:
 
@@ -48,12 +49,15 @@ Every agent platform holds dangerous capability open and asks the model not to u
 Boot the platform with two skills enabled and it says:
 
 ```
-  tools   9 declared; anything else is denied
-  gated   5 require a recorded decision
+  tools   16 declared; anything else is denied
+  gated   9 require a recorded decision
   granted GET across every enabled skill
 ```
 
-Nine tools, five of them consequential, and not one write method exists yet.
+Sixteen tools, nine of them consequential, and not one write method exists yet.
+Seven of those tools are the OpenClaw gateway's own admin surface, governed by the
+same two axes as everything else: `agents.list` is a read, `agents.delete` is a
+delete against a live agent runtime and takes two people.
 
 ---
 
@@ -88,12 +92,13 @@ Reads are safe. Writes are governed. Writes that can produce a dangerous outcome
 
 ```bash
 npm install
-npm test            # 161 tests
+npm test            # 177 tests
 npm run demo        # the whole narrative, end to end
 npm start           # API, UI and stream ingress
 npm run policy      # print the compiled envelope for every enabled skill
 npm run compliance  # fail the build on any dependency outside the hackathon rule
 
+npm run demo:layers               # all three layers, live against the OpenClaw gateway
 node scripts/benchmark-g1.mjs      # the autonomy measurement, counted from the ledger
 bash scripts/deploy-box.sh         # deploy to the Spark; green only if the BOX says so
 ```
