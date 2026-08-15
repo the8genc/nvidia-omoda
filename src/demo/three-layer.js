@@ -37,7 +37,12 @@ if (existsSync(".env")) {
   }
 }
 
-const URL_ = process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:18889";
+// The gateway runs on the box, so the default is the box's own loopback. This
+// is meant to be run ON the Acer: everything it needs (gateway, model, policy,
+// device key, token) lives there and nothing here depends on a workstation.
+// A developer running it from a laptop sets OPENCLAW_GATEWAY_URL to an SSH
+// tunnel, which is a convenience, never the deployment.
+const URL_ = process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:18789";
 const MUTATE = process.argv.includes("--mutate");
 
 const c = {
@@ -50,6 +55,21 @@ const step = (t) => console.log(`\n${c.b(t)}`);
 const ok = (s) => console.log(`   ${c.g("OK")}  ${s}`);
 const no = (s) => console.log(`   ${c.r("NO")}  ${s}`);
 const info = (s) => console.log(`   ${c.dim(s)}`);
+
+if (!process.env.OPENCLAW_GATEWAY_TOKEN) {
+  console.error(`
+  OPENCLAW_GATEWAY_TOKEN is not set.
+
+  This demo is meant to run ON the box, where the gateway lives. Put the token in
+  /home/arif/omoda/.env (mode 600, gitignored). It is the gateway's shared secret
+  and belongs to whoever administers it, so it is placed there deliberately rather
+  than fetched by this process.
+
+  Everything else the demo needs is already on the box: the gateway on :18789, the
+  compiled policy, and a device key it will generate on first run.
+`);
+  process.exit(1);
+}
 
 const { skills, errors } = loadSkills();
 if (errors.length) throw new Error(`skills failed to compile: ${errors.map((e) => e.path).join(", ")}`);
