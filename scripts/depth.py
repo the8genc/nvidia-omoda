@@ -1,5 +1,6 @@
-# Concern: monocular depth (Depth-Anything-V2-Small) on one frame + raw/vis artifacts + convention stats | Non-concern: multi-frame, temporal, metric-scale calibration | IO: reads frames/shibuya_05.png, writes results/A2/shibuya_05_depth.{npy,png}, prints stats
+# Concern: monocular depth (Depth-Anything-V2-Small) on one frame + raw/vis artifacts + convention stats | Non-concern: multi-frame, temporal, metric-scale calibration | IO: reads --frame path, writes results/A2/<stem>_depth.{npy,png}, prints stats
 import os
+import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -9,12 +10,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from transformers import AutoModelForDepthEstimation, AutoImageProcessor
 
-FRAME = "/work/frames/shibuya_05.png"
 OUT_DIR = "/work/results/A2"
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# Derive output stem from the input frame filename
+parser = argparse.ArgumentParser()
+parser.add_argument("--frame", required=True)
+args = parser.parse_args()
+FRAME = args.frame
+stem = os.path.splitext(os.path.basename(FRAME))[0]
+
 # cv2 loads BGR; convert to RGB for the HF processor
 bgr = cv2.imread(FRAME)
+if bgr is None:
+    raise FileNotFoundError(f"Could not read input frame: {FRAME}")
 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 H, W = rgb.shape[:2]
 
@@ -33,7 +42,7 @@ with torch.no_grad():
 depth = F.interpolate(predicted_depth.unsqueeze(1), size=(H, W), mode="bicubic", align_corners=False)
 depth = depth.squeeze().cpu().numpy().astype(np.float32)
 
-np.save(os.path.join(OUT_DIR, "shibuya_05_depth.npy"), depth)
+np.save(os.path.join(OUT_DIR, f"{stem}_depth.npy"), depth)
 
 # normalize to this frame's own min/max for the visualization only
 dmin, dmax, dmean = float(depth.min()), float(depth.max()), float(depth.mean())
@@ -45,7 +54,7 @@ ax = plt.Axes(fig, [0.0, 0.0, 1.0, 1.0])
 ax.set_axis_off()
 fig.add_axes(ax)
 ax.imshow(norm, cmap="turbo", aspect="auto")
-fig.savefig(os.path.join(OUT_DIR, "shibuya_05_depth.png"), dpi=100)
+fig.savefig(os.path.join(OUT_DIR, f"{stem}_depth.png"), dpi=100)
 plt.close(fig)
 
 # convention check: mean over top 10% rows vs bottom 10% rows of the frame
@@ -53,6 +62,7 @@ n_rows = max(1, int(round(0.10 * H)))
 top_mean = float(depth[:n_rows, :].mean())
 bottom_mean = float(depth[H - n_rows:, :].mean())
 
+print(f"FRAME={FRAME}")
 print(f"DEPTH_MIN={dmin:.6f}")
 print(f"DEPTH_MAX={dmax:.6f}")
 print(f"DEPTH_MEAN={dmean:.6f}")

@@ -1,16 +1,14 @@
-# Concern: SegFormer-b0 Cityscapes semantic segmentation of one urban frame into a stripped colorized map + debug overlay + class distribution | Non-concern: quality judgement, multi-frame batching, model finetuning | IO: reads /work/frames/shibuya_05.png -> writes /work/results/A1/shibuya_05_seg.png, /work/results/A1/shibuya_05_overlay.png, stdout class-% table
+# Concern: SegFormer-b0 Cityscapes semantic segmentation of one urban frame into a stripped colorized map + debug overlay + per-pixel class-id map + class distribution | Non-concern: quality judgement, multi-frame batching, model finetuning | IO: reads --frame path -> writes results/A1/<stem>_seg.png, <stem>_overlay.png, <stem>_classid.npy, stdout class-% table
 
 import os
+import argparse
 import numpy as np
 import cv2
 import torch
 import torch.nn.functional as F
 from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
 
-INPUT_PATH = "/work/frames/shibuya_05.png"
 OUTPUT_DIR = "/work/results/A1"
-SEG_PATH = os.path.join(OUTPUT_DIR, "shibuya_05_seg.png")
-OVERLAY_PATH = os.path.join(OUTPUT_DIR, "shibuya_05_overlay.png")
 MODEL_ID = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
 
 # Standard Cityscapes 19-class trainId palette (RGB), index == argmax class id
@@ -32,6 +30,16 @@ def colorize(class_id_map):
     palette = np.array(CITYSCAPES_PALETTE_RGB, dtype=np.uint8)
     return palette[class_id_map]
 
+
+# Derive output stem from the input frame filename
+parser = argparse.ArgumentParser()
+parser.add_argument("--frame", required=True)
+args = parser.parse_args()
+INPUT_PATH = args.frame
+stem = os.path.splitext(os.path.basename(INPUT_PATH))[0]
+SEG_PATH = os.path.join(OUTPUT_DIR, f"{stem}_seg.png")
+OVERLAY_PATH = os.path.join(OUTPUT_DIR, f"{stem}_overlay.png")
+CLASSID_PATH = os.path.join(OUTPUT_DIR, f"{stem}_classid.npy")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -56,6 +64,9 @@ upsampled_logits = F.interpolate(
 )
 class_id_map = upsampled_logits.argmax(dim=1)[0].to(torch.uint8).cpu().numpy()
 
+# Save the per-pixel Cityscapes trainId map for downstream analysis
+np.save(CLASSID_PATH, class_id_map)
+
 seg_rgb = colorize(class_id_map)
 seg_bgr = cv2.cvtColor(seg_rgb, cv2.COLOR_RGB2BGR)
 cv2.imwrite(SEG_PATH, seg_bgr)
@@ -74,6 +85,7 @@ rows.sort(key=lambda row: row[1], reverse=True)
 
 print(f"Frame: {INPUT_PATH} ({frame_width}x{frame_height})")
 print(f"Device: {device}")
+print(f"Wrote: {CLASSID_PATH}")
 print("Per-class pixel percentage (descending):")
 for class_name, percentage in rows:
     print(f"{class_name}: {percentage:.4f}%")
