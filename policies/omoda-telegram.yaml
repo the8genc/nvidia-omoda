@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# omoda-telegram: hardened Telegram Bot API egress for the OMODA operator channel
+# ================================================================================
+#
+# WHY THIS FILE EXISTS
+#
+# NemoClaw v0.0.90 already ships a working Telegram preset. It is NOT in
+# `nemoclaw-blueprint/policies/presets/` (where we first looked and did not find
+# it); it lives in the CLI's channel registry:
+#
+#     src/lib/messaging/channels/telegram/policy/hermes.yaml    <- Hermes variant
+#     src/lib/messaging/channels/telegram/policy/openclaw.yaml  <- OpenClaw variant
+#
+# and is applied by `channels add telegram` + `policy add telegram`. Use the stock
+# preset if you just want Telegram working (see APPLYING, option B).
+#
+# This file exists because the stock preset is deliberately permissive:
+#
+#     - allow: { method: GET,  path: "/bot*/**" }
+#     - allow: { method: POST, path: "/bot*/**" }
+#     - allow: { method: GET,  path: "/file/bot*/**" }
+#
+# `/bot*/**` is *every method in the Telegram Bot API*. For a general assistant
+# that is a reasonable default. For OMODA it is not, because OMODA's entire thesis
+# is that autonomy is only defensible inside a **narrow, enforced envelope**, and
+# the operator channel is the one surface that must not widen.
+#
+# THE SPECIFIC HOLE: `setWebhook`
+#
+# Under `POST /bot*/**` the agent may call `setWebhook`, which re-points the bot's
+# update delivery at an arbitrary HTTPS URL. An agent that can call `setWebhook`
+# can redirect the operator's approval channel, and therefore **forge its own
+# approvals**. That is a T3-class capability (privilege escalation against the
+# gate itself, PRD §9.4 item 6) hiding inside what reads as "just messaging".
+# It is not reachable in practice today, but relying on "the model won't call it"
+# is exactly the trust-by-prompt posture OMODA exists to reject.
+#
+# Also excluded: `deleteMessage` (erases audit trail from the operator's view),
+# `sendDocument`/`sendPhoto`/`sendVideo` (bulk file exfiltration path; plain
+# `sendMessage` text to a known chat is a far narrower channel), `forwardMessage`
+# (relay to third parties), and the chat-admin surface (`banChatMember`,
+# `leaveChat`, `promoteChatMember`).
+#
+# WHAT IS ALLOWED: exactly the seven methods the operator loop uses.
+#
+# TRADE-OFF, STATED PLAINLY
+#
+# Dropping `/file/bot*/**` means the operator CANNOT send screenshots/files into
+# the sandbox. PRD US-8 (multimodal perception) is unaffected for on-box
+# artifacts, which is the primary path; the Perceiver reads from the workspace,
+# not from Telegram. If you want inbound images from the phone, uncomment the
+# INBOUND FILES block below and accept a file-ingress surface.
+#
+# CREDENTIAL HANDLING (unchanged from stock, do not alter)
+#
+# The bot token never enters the sandbox. The channel manifest registers it as
+# provider `{sandboxName}-telegram-bridge` and injects only the placeholder
+# `openshell:resolve:env:TELEGRAM_BOT_TOKEN`; the OpenShell gateway substitutes
+# the real token as the request leaves. This is why `sendMessage` being allowed
+# does not imply the agent holds a credential. Never add api.telegram.org to a
+# raw L4 (`access: full`, `tls: skip`) entry; that would bypass the rewrite and
+# hand the agent the live token.
+#
+# PAIR THIS WITH `TELEGRAM_ALLOWED_IDS`
+#
+# Network policy controls *which endpoints*, not *which humans*. Set
+# TELEGRAM_ALLOWED_IDS to the operator's numeric user ID at the channel layer, or
+# any Telegram user who finds the bot can issue APPROVE/DENY/UNDO. Both layers
+# are required; neither substitutes for the other.
+
+preset:
+  name: omoda-telegram
+  description: "OMODA operator channel: least-privilege Telegram Bot API (Hermes)"
+
+network_policies:
+  # Policy key MUST stay `telegram` for the Hermes agent: the channel manifest
+  # declares `agentPolicyKeys: { hermes: ["telegram"] }`, so this key is what the
+  # Hermes bridge and `policy list` expect. (OpenClaw uses `telegram_bot`.)
+  telegram:
+    name: telegram
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest # L7: per-request method+path filtering ON. Without
+        # this the entry degrades to a raw TCP tunnel and
+        # every rule below becomes decorative.
+        enforcement: enforce
+        rules:
+          # ── Inbound: receive operator commands ──────────────────────────
+          # Long-poll for updates. Carries APPROVE / DENY / UNDO / AUDIT /
+          # STATUS / HALT / RESUME.
+          - allow: { method: GET, path: "/bot*/getUpdates" }
+          - allow: { method: POST, path: "/bot*/getUpdates" }
+
+          # ── Outbound: notices and escalations ───────────────────────────
+          # T1 UNDO notices, T2 policy-delta escalations, task summaries.
+          - allow: { method: POST, path: "/bot*/sendMessage" }
+
+          # ── Resolve an inline button tap ────────────────────────────────
+          # answerCallbackQuery acknowledges the tap; the two edit* methods
+          # rewrite the escalation message in place and strip its buttons so a
+          # decided approval cannot be re-tapped from scrollback. This is the
+          # UI half of single-use tokens; the Broker still enforces
+          # single-use server-side (PRD §16.2); this only prevents confusion.
+          - allow: { method: POST, path: "/bot*/answerCallbackQuery" }
+          - allow: { method: POST, path: "/bot*/editMessageText" }
+          - allow: { method: POST, path: "/bot*/editMessageReplyMarkup" }
+
+          # ── Health check ────────────────────────────────────────────────
+          # getMe is what the channel's status-health probe calls to decide
+          # whether the bridge is live. Omitting it makes `channels status`
+          # report the channel unreachable even when it works.
+          - allow: { method: GET, path: "/bot*/getMe" }
+
+          # ── INBOUND FILES (opt-in, NOT enabled) ─────────────────────────
+          # Uncomment BOTH lines to let the operator send images/files in.
+          # Adds a file-ingress surface; content must be treated as untrusted
+          # and screened by the guard model before reaching planner context
+          # (PRD §17, prompt-injection surface).
+          # - allow: { method: POST, path: "/bot*/getFile" }
+          # - allow: { method: GET,  path: "/file/bot*/**" }
+
+          # ── DELIBERATELY ABSENT: do not add without a T3 review ──────────
+          #   setWebhook / deleteWebhook  -> redirect the approval channel
+          #   deleteMessage               -> erase the operator-visible trail
+          #   sendDocument / sendPhoto    -> bulk exfiltration
+          #   forwardMessage              -> relay to third parties
+          #   banChatMember / leaveChat   -> chat administration
+
+    binaries:
+      # Matches the stock Hermes preset. The Telegram bridge's real dialing
+      # binary has not been observed yet on this box, so we do NOT narrow this
+      # axis on a guess; a wrong entry here silently kills the operator channel,
+      # and the demo dies with it. We tighten the axis we have certainty about
+      # (methods, above) and defer the one we don't.
+      #
+      # P1 follow-up: identify the actual binary, then drop the rest:
+      #   openshell term            # shows host, port, AND requesting binary
+      #   nemoclaw omoda policy list
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# APPLYING
+#
+# Option A: hardened (this file). Preset resolution from a dropped-in file is
+# NOT yet verified on this box; the policy get/set round-trip is the documented,
+# reliable path (needs OpenShell >= 0.0.72; box has 0.0.85):
+#
+#   export TELEGRAM_BOT_TOKEN=<from @BotFather>
+#   NEMOCLAW_NON_INTERACTIVE=1 nemoclaw omoda channels add telegram
+#   nemoclaw omoda rebuild
+#   nemoclaw omoda policy get > /tmp/omoda-policy.yaml
+#   # merge the `telegram:` block above into network_policies:
+#   openshell policy set --policy /tmp/omoda-policy.yaml --wait omoda
+#   nemoclaw omoda policy list          # confirm: api.telegram.org:443 rest/enforce
+#
+# Option B: stock preset (fallback if Option A misbehaves mid-build). Working
+# channel, broader surface; note the widening in the ledger and re-tighten after:
+#
+#   nemoclaw omoda policy add telegram --dry-run   # preview first
+#   nemoclaw omoda policy add telegram --yes
+#
+# VERIFY THE HARDENING ACTUALLY HOLDS (should print 403):
+#
+#   curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+#     https://api.telegram.org/botTEST/setWebhook -d url=https://example.com
+#
+# A 403 here is OpenShell refusing the request, which is the whole point. If it
+# returns anything else, `protocol: rest` is not in effect and this file is not
+# doing what it claims; stop and fix that before trusting the envelope.
+# ═══════════════════════════════════════════════════════════════════════════
