@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Concern: the reviewed commit gate — the webapp judged against the KB Vue3 + language-agnostic standards | Non-concern: how a gate is checked (git-agent-verdict owns that), or the UI/UX visual gate (a separate screenshot review) | IO: (message, tool version) -> status
+# Enable per clone: git config core.hooksPath .githooks   Bypass (bootstrap/maintenance only): git commit --no-verify
+set -euo pipefail
+
+git agent-verdict --require-version 1.0
+
+# The webapp is Vue 3 + TypeScript; it is reviewed against the two KB standards plus the single-line-comment rule.
+git agent-verdict "$1" webapp \
+  --doc /home/fredrik/.knowledge-base/coding-standards/language-agnostic-programming-standards.md \
+  --doc /home/fredrik/.knowledge-base/coding-standards/vue3-project-standards.md \
+  --rule "every comment is a single line; block comments and multi-line comment runs are forbidden" \
+  --path webapp
