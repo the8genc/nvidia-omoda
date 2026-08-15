@@ -1,6 +1,6 @@
-// Concern: uploads video to /process, polls the manifest, exposes status + frame/cloud URLs | Non-concern: which frame shows or asset decode (usePlayback/panels own that) | IO: (cb) -> JobContext
+// Concern: attach a job (upload to /process or load the demo), poll its manifest, expose status + asset URLs | Non-concern: frame choice or decode (usePlayback/panels) | IO: (cb) -> JobContext
 import { onUnmounted, readonly, ref } from 'vue'
-import { frameUrl, jobUrl, processUrl, renderUrl as buildRenderUrl } from '@/api/config'
+import { demoUrl, frameUrl, jobUrl, processUrl, renderUrl as buildRenderUrl } from '@/api/config'
 import type { FrameAsset, JobContext, JobManifest, JobStatus } from '@/types/pipeline'
 
 const POLL_INTERVAL_MS = 900
@@ -14,6 +14,9 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
   const uploading = ref(false)
 
   let pollTimer: number | null = null
+  let disposed = false
+  // bumped on every new attach (upload or load) so an in-flight poll from a superseded job cannot clobber current state
+  let generation = 0
 
   function stopPolling(): void {
     if (pollTimer !== null) {
@@ -23,10 +26,13 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
   }
 
   async function pollOnce(id: string): Promise<void> {
+    const gen = generation
     try {
       const response = await fetch(jobUrl(id))
       if (!response.ok) throw new Error(`Manifest request failed (${response.status})`)
       const data = (await response.json()) as JobManifest
+      // a newer attach happened while this fetch was in flight: drop the result rather than clobber the current job
+      if (disposed || gen !== generation) return
       manifest.value = data
       status.value = data.status
       progress.value = typeof data.progress === 'number' ? data.progress : 0
@@ -36,6 +42,7 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
         if (data.status === 'error') error.value = 'Backend reported a processing error.'
       }
     } catch (e) {
+      if (disposed || gen !== generation) return
       error.value = e instanceof Error ? e.message : 'Failed to poll job manifest.'
       status.value = 'error'
       stopPolling()
@@ -51,6 +58,7 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
 
   async function submitVideo(file: File): Promise<void> {
     stopPolling()
+    generation++
     uploading.value = true
     error.value = null
     status.value = 'queued'
@@ -77,6 +85,32 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
     }
   }
 
+  async function loadJob(id: string): Promise<void> {
+    // attach to an already-processed (or processing) job without uploading; pollOnce sets status from the manifest so a done job never flashes "processing"
+    stopPolling()
+    generation++
+    error.value = null
+    jobId.value = id
+    progress.value = 0
+    manifest.value = null
+    await pollOnce(id)
+    if (!disposed && (status.value === 'processing' || status.value === 'queued')) startPolling(id)
+  }
+
+  async function loadDemo(): Promise<void> {
+    // boot into the persistent demo job; a 404 (no demo) or a racing upload leaves the app on the dropzone, while any other failure surfaces as an error
+    if (jobId.value || uploading.value) return
+    try {
+      const response = await fetch(demoUrl())
+      if (response.status === 404) return
+      if (!response.ok) throw new Error(`Demo request failed (${response.status})`)
+      const data = (await response.json()) as { job_id: string }
+      if (!jobId.value && !uploading.value && !disposed) await loadJob(data.job_id)
+    } catch (e) {
+      if (!disposed) error.value = e instanceof Error ? e.message : 'Failed to load demo job.'
+    }
+  }
+
   function frameAssetUrl(index: number, asset: FrameAsset): string {
     if (!jobId.value) return ''
     return frameUrl(jobId.value, index, asset)
@@ -93,6 +127,7 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
   }
 
   onUnmounted(() => {
+    disposed = true
     stopPolling()
   })
 
@@ -104,6 +139,7 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
     error: readonly(error),
     uploading: readonly(uploading),
     submitVideo,
+    loadDemo,
     frameAssetUrl,
     cloudUrl,
     renderUrl

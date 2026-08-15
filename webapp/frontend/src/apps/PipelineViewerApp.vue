@@ -1,6 +1,6 @@
-<!-- Concern: root that creates playback+job state and provides them as context to the shell | Non-concern: rendering panels or transport (child features own that) | IO: none -->
+<!-- Concern: root that creates playback+job state, provides them to the shell, and boots the demo job on mount | Non-concern: rendering panels or transport (child features own that) | IO: none -->
 <script setup lang="ts">
-import { provide } from 'vue'
+import { onMounted, provide } from 'vue'
 import AppHeader from '@/features/pipeline/AppHeader.vue'
 import TransportBar from '@/features/pipeline/TransportBar.vue'
 import PanelGrid from '@/features/pipeline/PanelGrid.vue'
@@ -19,6 +19,11 @@ const job = useJob(onManifest)
 
 provide(PLAYBACK_KEY, playback)
 provide(JOB_KEY, job)
+
+// boot into the pre-processed Bellevue demo; drag-and-drop still replaces it, and a missing demo falls back to the dropzone
+onMounted(async () => {
+  await job.loadDemo()
+})
 </script>
 
 <template>

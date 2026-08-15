@@ -62,6 +62,7 @@ export interface JobContext {
   error: Readonly<Ref<string | null>>
   uploading: Readonly<Ref<boolean>>
   submitVideo: (file: File) => Promise<void>
+  loadDemo: () => Promise<void>
   frameAssetUrl: (index: number, asset: FrameAsset) => string
   cloudUrl: (index: number) => string
   renderUrl: (index: number) => string

@@ -7,6 +7,8 @@ tailnet with CORS open. Base path `/api`. The frontend never runs models — it 
 per-frame artifacts and renders them synchronized.
 
 ## Endpoints
+- `GET /api/demo` — returns `{ "job_id": "demo" }` for the persistent, pre-processed Bellevue job the
+  viewer boots into. `404` when no demo exists; the frontend then falls back to the empty dropzone.
 - `POST /api/process` — multipart form, field `video` (a dropped surveillance video). Returns
   `{ "job_id": "<id>" }`. The backend extracts frames (~6 fps) and runs depth + seg over all of them.
 - `GET /api/jobs/{job_id}` — manifest:

@@ -1,7 +1,8 @@
-# Concern: FastAPI routes, job manifest lifecycle, artifact serving, per-frame pipeline orchestration | Non-concern: CV processing, atomic writes (pipeline pkg) | IO: (POST mp4) -> job_id + artifacts
+# Concern: FastAPI routes, job/manifest lifecycle, artifact serving, and startup bootstrap of the demo job | Non-concern: CV processing, atomic writes (pipeline pkg) | IO: (mp4 or demo) -> job_id
 import json
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import cv2
@@ -16,6 +17,10 @@ from pipeline import Pipeline, store
 BACKEND_DIR = Path(__file__).resolve().parent
 JOBS_ROOT = Path("/work/webapp/backend/jobs")
 JOBS_ROOT.mkdir(parents=True, exist_ok=True)
+
+# a stable, persistent demo job so the viewer opens showing Bellevue already processed; the dir survives container restarts (host bind mount)
+DEMO_JOB_ID = "demo"
+DEMO_VIDEO = Path("/work/bellevue_15s.mp4")
 
 # frame sampling target; the source is decimated to roughly this many frames per second
 TARGET_FPS = 6.0
@@ -32,13 +37,13 @@ print("building pipeline...", flush=True)
 PIPELINE = Pipeline(BACKEND_DIR)
 print(f"pipeline ready on {PIPELINE.device}", flush=True)
 
-app = FastAPI()
-# allow the browser frontend (different origin/port) to call this API cross-origin
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
 
 def _job_dir(job_id: str) -> Path:
     return JOBS_ROOT / job_id
+
+
+def _queued_manifest() -> dict:
+    return {"status": "queued", "n_frames": 0, "fps": TARGET_FPS, "width": 0, "height": 0, "progress": 0.0}
 
 
 def _sample_frames(video_path: Path):
@@ -115,6 +120,48 @@ def _process_job(job_id: str, video_path: Path) -> None:
         print("JOB ERROR", job_id, manifest["error"], flush=True)
 
 
+def _ensure_demo() -> None:
+    d = _job_dir(DEMO_JOB_ID)
+    manifest_path = d / "manifest.json"
+    if manifest_path.exists():
+        try:
+            status = json.loads(manifest_path.read_text()).get("status")
+        except (OSError, json.JSONDecodeError):
+            status = None
+        if status == "done":
+            print("demo job already processed; skipping", flush=True)
+            return
+        # a non-done manifest left by a killed run has no live worker after restart; drop it so it is never advertised as a stuck job
+        manifest_path.unlink(missing_ok=True)
+    if not DEMO_VIDEO.exists():
+        print(f"demo video missing at {DEMO_VIDEO}; /api/demo will 404", flush=True)
+        return
+    d.mkdir(parents=True, exist_ok=True)
+    store.write_json(manifest_path, _queued_manifest())
+    print("processing demo job in background...", flush=True)
+    threading.Thread(target=_process_job, args=(DEMO_JOB_ID, DEMO_VIDEO), daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # bootstrap the demo on startup, not at import, so importing this module never launches a GPU run
+    threading.Thread(target=_ensure_demo, daemon=True).start()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+# allow the browser frontend (different origin/port) to call this API cross-origin
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.get("/api/demo")
+def get_demo():
+    # 404 when the demo has no manifest so the frontend falls back to the empty dropzone
+    if not (_job_dir(DEMO_JOB_ID) / "manifest.json").exists():
+        raise HTTPException(status_code=404, detail="no demo job")
+    return {"job_id": DEMO_JOB_ID}
+
+
 @app.post("/api/process")
 async def process(video: UploadFile = File(...)):
     # accept multipart 'video', persist it, kick off background processing, return job_id
@@ -125,8 +172,7 @@ async def process(video: UploadFile = File(...)):
     data = await video.read()
     # keep the disk write (a whole mp4) off the event loop so concurrent jobs' manifest polls are not blocked
     await run_in_threadpool(video_path.write_bytes, data)
-    await run_in_threadpool(store.write_json, d / "manifest.json",
-                            {"status": "queued", "n_frames": 0, "fps": TARGET_FPS, "width": 0, "height": 0, "progress": 0.0})
+    await run_in_threadpool(store.write_json, d / "manifest.json", _queued_manifest())
     threading.Thread(target=_process_job, args=(job_id, video_path), daemon=True).start()
     return JSONResponse({"job_id": job_id})
 

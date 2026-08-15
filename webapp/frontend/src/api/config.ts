@@ -5,6 +5,10 @@ export function processUrl(): string {
   return `${API_BASE}/process`
 }
 
+export function demoUrl(): string {
+  return `${API_BASE}/demo`
+}
+
 export function jobUrl(jobId: string): string {
   return `${API_BASE}/jobs/${jobId}`
 }
