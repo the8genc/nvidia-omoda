@@ -9,10 +9,12 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
-    "dev": "node src/api/server.js"
+    "dev": "node src/api/server.js",
+    "compliance": "node scripts/compliance-check.mjs"
   },
   "dependencies": {
-    "yaml": "^2.9.0",
+    "ws": "8.21.1",
+    "yaml": "2.9.0",
     "zod": "3.23.8"
   }
 }
