@@ -63,6 +63,30 @@ run_smoke() {
   else
     fail "boot log does not show the OpenShell sandbox policy"
   fi
+
+  # 5. Nemotron answers on the box. The model is the point; if it is down, the
+  #    planner degrades and half the system's claims stop being demonstrable.
+  c=$(code "http://127.0.0.1:8000/health")
+  [ "$c" = 200 ] && pass "local Nemotron healthy on :8000" || fail "local Nemotron :8000 -> $c"
+
+  # 6. all three layers, end to end, against the live gateway. This is the one
+  #    that proves the architecture rather than the process being up.
+  if [ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ] && ! grep -q '^OPENCLAW_GATEWAY_TOKEN=' .env 2>/dev/null; then
+    fail "three-layer demo cannot run: OPENCLAW_GATEWAY_TOKEN absent from .env on the box"
+  elif node src/demo/three-layer.js > /tmp/omoda-three-layer.log 2>&1; then
+    # Assert the SUBSTANCE, not just the exit code.
+    if grep -q 'hello-ok' /tmp/omoda-three-layer.log \
+       && grep -q 'no human in the loop' /tmp/omoda-three-layer.log \
+       && grep -q 'after revert: 403' /tmp/omoda-three-layer.log \
+       && grep -q 'gateway-self-protection' /tmp/omoda-three-layer.log \
+       && grep -q '"ok":true' /tmp/omoda-three-layer.log; then
+      pass "three layers end to end: gateway paired, read unattended, write reverted, prohibited refused"
+    else
+      fail "three-layer demo ran but did not prove all four properties; see /tmp/omoda-three-layer.log"
+    fi
+  else
+    fail "three-layer demo failed; tail:"; tail -5 /tmp/omoda-three-layer.log | sed 's/^/      /'
+  fi
 }
 
 case "$MODE" in
