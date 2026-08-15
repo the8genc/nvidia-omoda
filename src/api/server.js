@@ -13,6 +13,8 @@ import {
 } from "./auth.js";
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
+import { randomBytes } from "node:crypto";
+import { render, SkillsPage, IntentsPage, LedgerPage } from "../web/ui.js";
 
 const ProposeBody = z.object({
   source: z.string().min(1).optional(),
@@ -53,7 +55,11 @@ async function readBody(req, limit = 256 * 1024) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export function createApp({ tokens, ledger, intents, nonces, limiter } = {}) {
+export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [], uiOperator = null } = {}) {
+  // The UI is server-rendered and acts on the operator's behalf server-side, so
+  // the operator credential never reaches a browser. CSRF is a per-process
+  // token because this control plane is single-operator and tailnet-only.
+  const csrf = randomBytes(16).toString("hex");
   tokens ??= createTokenStore();
   ledger ??= createLedger({});
   intents ??= createIntentStore();
@@ -66,6 +72,43 @@ export function createApp({ tokens, ledger, intents, nonces, limiter } = {}) {
     const method = req.method;
 
     if (path === "/healthz" && method === "GET") return json(res, 200, { ok: true, status: "live" });
+
+    // ── server-rendered UI ────────────────────────────────────────────────
+    const html = (status, markup) => {
+      res.writeHead(status, {
+        "content-type": "text/html; charset=utf-8",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+        "cache-control": "no-store",
+      });
+      res.end(markup);
+    };
+
+    if (path === "/ui" && method === "GET") return html(200, render(SkillsPage({ skills })));
+    if (path === "/ui/intents" && method === "GET") {
+      return html(200, render(IntentsPage({ intents: intents.all(), csrf })));
+    }
+    if (path === "/ui/ledger" && method === "GET") {
+      return html(200, render(LedgerPage({ entries: ledger.query({ limit: 200 }), chain: ledger.verify() })));
+    }
+    if (path === "/ui/decide" && method === "POST") {
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      if (!uiOperator) return html(503, "<p>no operator identity configured for the UI</p>");
+      const out = intents.decide({
+        intentId: form.get("intent_id"),
+        actionId: form.get("action_id"),
+        verdict: form.get("verdict"),
+        reason: form.get("reason"),
+        caller: uiOperator,
+      });
+      ledger.append({
+        kind: "ui", agent: uiOperator.id, tool: "ui.decide", verb: "update",
+        outcome: out.ok ? "recorded" : "refused", reason: out.ok ? form.get("verdict") : out.reason,
+      });
+      res.writeHead(303, { location: "/ui/intents" });
+      return res.end();
+    }
 
     let raw = "";
     try {
