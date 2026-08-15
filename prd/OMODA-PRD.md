@@ -8,7 +8,7 @@
 **Slug:** `omoda`
 **Repo:** [`the8genc/nvidia-omoda`](https://github.com/the8genc/nvidia-omoda)
 **Sibling project (shares the box):** [`the8genc/leftovers`](https://github.com/the8genc/leftovers)
-**Event:** NVIDIA Spark Hackathon, Seattle · **Track: DO (Agentic AI)** · targeting the **NeMoClaw + OpenShell bounty** and the **Nemotron Lightning bounty**
+**Event:** NVIDIA Spark Hackathon, Seattle (Aug 14 to 16, thinkspace) · **Track: Do** · targeting **Best Use of NVIDIA Nemotron**
 
 ---
 
@@ -498,7 +498,7 @@ AINative paths verified against the live catalog (`prd_list_services`, `prd_get_
 
 ## 13. Ground Truth: Verified State of the Box
 
-Verified by direct inspection on 2026-08-15 (`ssh acer01@100.71.143.26`). Numbers below are what the box actually reported.
+Verified by direct inspection on 2026-08-15. Access is `ssh gn100` as the `arif` account; the shared `acer01` login and anything under `/home/acer01` are off-limits per the team's shared-infra doc. Numbers below are what the box actually reported.
 
 | Item | Verified value | Consequence for OMODA |
 |---|---|---|
@@ -516,7 +516,9 @@ Verified by direct inspection on 2026-08-15 (`ssh acer01@100.71.143.26`). Number
 | Hermes support | `supportedAgents: ["openclaw", "hermes"]`; `agentPolicyKeys: { hermes: ["telegram"] }`; `hermesAuthMethod` in `sandboxes.json` | HERMES is selectable at sandbox creation (R2 resolved) |
 | Path globbing | Intra-segment `*` supported: `/bot*/**`, `/api/v*/applications/*/commands` (Discord preset) | `/bot*/sendMessage`-style least-privilege rules are valid |
 | Landlock | `compatibility: best_effort` in the baseline policy | Best-effort, not guaranteed. Scope autonomy to what the kernel actually enforces (§17) |
-| Ports in use | `:8000` vLLM (shared), `:8080` gateway, `:11000`/`:11002` tailnet, `:18789`/`:18790` dashboards | OMODA stays in its assigned block → R3 |
+| Ports in use | `22, 53, 631, 5180, 8000` (vLLM), `8080` (gateway), `8091, 11000, 11002` (dashboard), `18789, 49065, 62524` | None inside OMODA's block |
+| **OMODA port block** | **3100 to 3199**, `PORT_BASE=3100`, from `team.conf` + `~/env.sh`. All 100 currently free | Bind only here. Neighbours: tiruye 3200s, fredrik 3300s, koti 3400s, praveen 3500s |
+| Workspace | `OMODA_DIR=/home/arif/omoda`, repo already cloned | Work here, never under `/home/acer01` |
 | Model cache | `$HF_HOME`, 43 GB, shared | **T3: no writes** |
 
 ### Risk register
@@ -526,11 +528,12 @@ Verified by direct inspection on 2026-08-15 (`ssh acer01@100.71.143.26`). Number
 | ~~**R1**~~ | ~~No `telegram` policy preset.~~ **RESOLVED 2026-08-15.** Telegram is fully supported in v0.0.90. The preset is not in `nemoclaw-blueprint/policies/presets/` (where we first looked); it ships in the CLI channel registry at `src/lib/messaging/channels/telegram/policy/{hermes,openclaw}.yaml` and is applied by `channels add telegram` + `policy add telegram`. `nemoclaw my-assistant channels` lists telegram; `tiers.yaml` includes it at `personal`; the baseline excludes messaging **by design** (#1705/#2180) so it stays opt-in | Read the shipped YAML + manifest on the box | **No longer a risk.** We ship a *hardened* variant instead, [`policies/omoda-telegram.yaml`](../policies/omoda-telegram.yaml), because the stock preset allows `GET/POST /bot*/**`, i.e. the entire Bot API. See R8 | Lead |
 | ~~**R2**~~ | ~~HERMES may not be selectable.~~ **RESOLVED 2026-08-15.** The Telegram channel manifest declares `supportedAgents: ["openclaw", "hermes"]` and ships a Hermes-specific policy and `agentPolicyKeys: { hermes: ["telegram"] }`; `sandboxes.json` carries a `hermesAuthMethod` field | `src/lib/messaging/channels/telegram/manifest.ts` | Select `hermes` at sandbox creation. OpenClaw remains the fallback; the Broker/envelope/ledger/routing are harness-agnostic either way | Lead |
 | **R8** | **Stock Telegram preset is over-broad for OMODA.** `POST /bot*/**` permits `setWebhook`, which re-points update delivery to an arbitrary URL. An agent that can call `setWebhook` can **redirect the approval channel and forge its own approvals**, a T3-class escalation (§9.4 item 6) sitting inside what reads as "just messaging" | Stock `telegram/policy/hermes.yaml` | Ship the hardened preset: seven enumerated methods (`getUpdates`, `sendMessage`, `answerCallbackQuery`, `editMessageText`, `editMessageReplyMarkup`, `getMe`), no `setWebhook`/`deleteMessage`/`sendDocument`/`forwardMessage`, no `/file/bot*/**`. Verified by asserting a **403** on a `setWebhook` attempt (§16.1) | Lead |
-| **R3** | Port-block collision with `leftovers` | `~/team.conf` and `~/env.sh` not readable on the shared `acer01` account | **Confirm the assigned block before any bind** (blocking, first task Sat AM). Enforce it in code as a T3 rule. | Lead |
+| ~~**R3**~~ | ~~Port-block collision with `leftovers`~~. **RESOLVED 2026-08-15.** OMODA owns **3100 to 3199** (`PORT_BASE=3100`). The files were not missing, they live under `/home/arif`, not the shared `acer01` account we first probed | `/home/arif/leftovers/team.conf`, `/home/arif/env.sh`, `docs/shared-infra-setup.md` | Compile 3100 to 3199 into the Broker as the only bindable range; any bind outside it is T3 | Lead |
 | **R4** | Shared-vLLM contention / OOM takes down both projects | 115/121 GiB used | Bounded concurrency (default 2), memory floor pre-check ≥ 4 GiB, `spark-status.sh` before heavy steps, hard T3 on `:8000` | All |
 | **R5** | AINative reachability from a tailnet-only, deny-by-default box | Prior art records live AINative degradation | Offline-first by design (§8): local WAL is authoritative for the demo; sync is best-effort | Lead |
 | **R6** | Hosted Lightning unreachable during the demo | Egress dependency | Planner falls back to local Omni with a recorded quality caveat; demo script includes the fallback as a **feature** | Lead |
-| **R7** | Notion rules page could not be machine-read (JS-rendered; returned no content on two attempts) | Two fetch attempts returned nothing | Rules sourced from the local transcript MD instead; **a human must diff against the Notion page before submission** | Lead |
+| ~~**R7**~~ | ~~Notion rules page could not be machine-read~~. **RESOLVED 2026-08-15** via the Coda mirror. The diff was material: track is **Do** (not "DO Track (Agentic AI)"), and the bounty list is **Best Use of NVIDIA Nemotron**, Ascend Venture Potential, and Developer Champions Choice. **There is no NemoClaw + OpenShell bounty and no bounty named for Lightning** | Coda page `Notion Rules` | Header and §19 corrected. See R9 for the scoring exposure the real judging criteria expose | Lead |
+| **R9** | **Problem-fit exposure under the published judging criteria.** Judging weighs *Value & Impact*: "Does the agent actually accomplish something a human would otherwise have to do manually?", with a worked example about routing building permits. It warns that "obvious or superficial framing scores low". OMODA's benchmark task (add a `/healthz` endpoint to OMODA itself) is engineering-internal and self-referential | Published judging criteria, section 3 | Keep the Broker as the technical story, but run the §16.4 benchmark on an **outward-facing** task with a named beneficiary rather than on OMODA's own codebase. Decide Friday | Lead |
 
 ---
 
@@ -656,11 +659,11 @@ This touches shell, filesystem writes, package install, git, and (for push) egre
 
 ## 19. Timeline
 
-Build window: **Fri evening 2026-08-14 → Sun 11:00 2026-08-16** (demo video due 11:00 Sunday).
+Build window: **Fri evening 2026-08-14 to Sun 11:00 2026-08-16**. Sunday 11:00 is a full **code freeze and submission deadline**, not just the video: submit via the Airtable form, following the published Demo Video Instructions and Submission Checklist. Judging 11:30 to 13:00, awards 14:00 to 15:00.
 
 | Phase | Window | Work | Exit criteria |
 |---|---|---|---|
-| **P0: Safety core** | Fri PM | **R1/R2 already resolved** (§13). Remaining spike: **R3** (port block), blocking. Write §16.1 negatives **first**, including the R8 `setWebhook` 403 assertion. Envelope compiler + tier classifier + ledger. Create the `omoda` sandbox with `agent: hermes`. | R3 answered in writing; safety negatives red→green; envelope compiles from live policy; hardened Telegram policy applied and `setWebhook` returns 403 |
+| **P0: Safety core** | Fri PM | **R1, R2, R3, R7 all resolved** (§13). Open decision: **R9**, pick the outward-facing benchmark task. Write §16.1 negatives **first**, including the R8 `setWebhook` 403 assertion and the 3100 to 3199 bind test. Envelope compiler + tier classifier + ledger. Create the `omoda` sandbox with `agent: hermes`. | Benchmark task chosen; safety negatives red→green; envelope compiles from live policy; hardened Telegram policy applied and `setWebhook` returns 403 |
 | **P1: Broker + Telegram** | Sat AM | Broker choke point, compensating-action registry, Telegram channel + policy, intent parsing, `HALT` | T0 executes silently; T1 executes with working `UNDO`; `HALT` < 2 s |
 | **P2: T2 escalation loop** | Sat PM | OpenShell denial interception, policy-delta proposal, approve→apply→retry, denylist | **US-5 works end to end on the box.** The money shot |
 | **P3: Multi-model + sub-agents** | Sat PM/eve | Lightning planner via gateway, Omni perception + risk classifier, sensitivity routing, four sub-agents with narrowed envelopes | ≥ 2 models load-bearing with per-role call counts in the ledger; third if memory permits |
@@ -675,10 +678,10 @@ Build window: **Fri evening 2026-08-14 → Sun 11:00 2026-08-16** (demo video du
 
 ## 20. Open Questions
 
-1. **Port block**: what 100-port range is OMODA assigned? `~/team.conf` and `~/env.sh` were not readable on the shared `acer01` account. **Blocking before any listener binds** (R3).
+1. ~~**Port block**~~: **RESOLVED.** 3100 to 3199, `PORT_BASE=3100`, all currently free. Compiled into the Broker as a T3 rule.
 2. **Team composition**: the rules require **teams of 3+**. Roster and role split (Broker / Telegram+HERMES / demo+benchmark) must be confirmed Friday.
 3. ~~**HERMES vs OpenClaw**~~. **RESOLVED.** The Telegram manifest declares `supportedAgents: ["openclaw", "hermes"]` with a Hermes-specific policy, so HERMES is selectable at sandbox creation. No blueprint refresh needed. OpenClaw stays as an in-build fallback only if the Hermes bridge misbehaves.
-4. **Lightning bounty framing**: is routing Lightning as the *planner brain via the gateway* a sufficiently "meaningful incorporation" for the bounty, or do judges expect local execution? Local is physically impossible at ~6 GiB free; worth a 2-minute check with an NVIDIA rep on site.
+4. **Nemotron bounty framing**: the bounty is **Best Use of NVIDIA Nemotron**, broader than Lightning alone, and it has published criteria worth reading before Saturday. We run two Nemotron models in load-bearing roles, one local and one hosted, which should read well. Open question is whether routing Lightning through the gateway rather than locally weakens the claim; local is physically impossible at ~6 GiB free. Worth two minutes with an NVIDIA rep on site.
 5. **Third model**: ship the ≤3B guard model, or fold the role into Omni and claim two? **Recommendation: attempt at boot, fall back automatically, and report what actually ran.** Never claim three if two ran.
 6. **T1 default TTL**: 30 min for `UNDO` is a guess. Long enough that a distracted operator can still reverse; short enough that snapshots do not accumulate. Revisit after the benchmark.
 7. **Demo egress**: will venue networking allow `integrate.api.nvidia.com` and `api.telegram.org`? If Telegram is blocked the operator channel dies. **Contingency: a local Telegram-shaped webhook stub on the tailnet, disclosed as such.**
