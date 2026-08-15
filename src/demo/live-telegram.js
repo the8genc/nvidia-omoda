@@ -19,6 +19,14 @@ const QB = "quickbooks.api.intuit.com";
 const PATH = "/v3/company/42/invoice";
 const TIMEOUT_MS = Number(process.env.OMODA_DEMO_TIMEOUT_MS ?? 180_000);
 
+// The demo tells its story in about six ledger lines. It must not inherit the
+// working ledger, which accumulates hundreds of entries across test runs (#19).
+// A fresh, timestamped file per take keeps the audit view legible on camera and
+// never touches var/ledger/actions.jsonl.
+if (!process.env.OMODA_LEDGER) {
+  process.env.OMODA_LEDGER = `var/ledger/demo-${Math.floor(Date.now() / 1000)}.jsonl`;
+}
+
 const c = {
   b: (s) => `\x1b[1m${s}\x1b[0m`, dim: (s) => `\x1b[2m${s}\x1b[0m`,
   g: (s) => `\x1b[32m${s}\x1b[0m`, r: (s) => `\x1b[31m${s}\x1b[0m`, cy: (s) => `\x1b[36m${s}\x1b[0m`,

@@ -78,7 +78,11 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const see = tokens.issue({ id: "see:leftovers", scopes: [SCOPES.PROPOSE] });
 
   const ledger = createLedger({ path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl" });
-  const intents = createIntentStore();
+  // A deployment with a single operator identity cannot satisfy a two-person
+  // rule; the store fails those closed rather than accept one tap. The operator
+  // allowlist is the source of truth for how many distinct deciders exist.
+  const operatorCount = (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
+  const intents = createIntentStore({ singleOperator: operatorCount <= 1 });
 
   const app = createApp({
     tokens, ledger, intents,

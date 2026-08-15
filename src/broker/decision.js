@@ -26,6 +26,16 @@ export function verifyDecision(decision, action, { now = Date.now() } = {}) {
   // Single use.
   if (decision.spent) return { ok: false, reason: "decision already spent, replay refused" };
 
+  // Quorum. A two-person action produces a decision on the first approval, but
+  // that decision is not executable until a second distinct approver settles it.
+  // Only an explicit false blocks here, so decisions with no quorum notion (the
+  // ordinary single-approval path) are unaffected.
+  if (decision.settled === false) {
+    const q = decision.quorum;
+    const detail = q ? ` (${q.have}/${q.needed} approvers)` : "";
+    return { ok: false, reason: `decision awaits a second approver${detail}` };
+  }
+
   // Time boxed.
   if (typeof decision.expiresAt === "number" && decision.expiresAt <= now) {
     return { ok: false, reason: "decision expired" };
