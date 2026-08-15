@@ -268,7 +268,20 @@ Identical responses came back on `/`, `/ws`, and `/gateway`, so the endpoint is 
 
 **Conclusion.** The three-layer architecture rests on a verified seam, not an assumption. Layer 1 can drive Layer 3 over a protocol both sides already speak, with one standard auth step remaining.
 
-**What was deliberately not done.** Pairing was not completed, because the only OpenClaw instance currently running is the shared `my-assistant` sandbox. `device.pair.approve` is an update against a service the `leftovers` team may be relying on: a write, with reputational blast domain, against shared infrastructure. By this document's own taxonomy that requires a recorded decision, and proving a protocol does not justify one. Pairing happens against OMODA's own sandbox at build time.
+### 9.1a Device identity implemented and accepted (2026-08-15, later)
+
+The remaining auth step is now built and exercised against the live gateway. `src/gateway/openclaw.js` reproduces the adapter's contract exactly: `PROTOCOL_VERSION = 4`, the ed25519 SPKI prefix, and the eleven pipe-joined fields of the v3 device-auth payload (`v3|deviceId|clientId|clientMode|role|scopes|signedAtMs|token|nonce|platform|deviceFamily`). The device id is the SHA-256 of the raw public key, so it is derived from the keypair rather than asserted, and the key is persisted so the id is stable across runs rather than filing a fresh pairing request on every connect. Thirteen tests in `test/openclaw-gateway.test.js` pin every constant and verify the signature the way the gateway would; if the upstream adapter drifts, those tests fail rather than the seam silently going stale.
+
+Probed against the Acer gateway on `ws://127.0.0.1:18789` through an SSH tunnel, the device identity was **accepted**. The refusal moved one gate forward:
+
+```
+before:  NOT_PAIRED / DEVICE_IDENTITY_REQUIRED
+now:     INVALID_REQUEST: unauthorized: gateway token missing (provide gateway auth token)
+```
+
+So the challenge-response is satisfied, and what remains is a gateway auth token, which is the owning team's shared secret rather than anything derivable client-side. That is the correct shape: a device proves it holds its key, and a separate credential proves the session is allowed to pair. Completing it is a write against another team's service and waits on their token.
+
+**What was deliberately not done.** Pairing was not completed by hunting for that token. `device.pair.approve` is an update against a service the `leftovers` team relies on: a write, with reputational blast domain, against shared infrastructure. By this document's own taxonomy that requires a recorded decision, and proving a protocol does not justify one. `scripts/gateway-pair.mjs` gates approval behind an explicit `--approve` flag, requires the shared token or password to be handed in, refuses to approve a pending request that belongs to a different device id, and ledgers every attempt. Probe and approve are separate acts; a probe never implies an approval.
 
 ### 9.2 Remaining risks
 
