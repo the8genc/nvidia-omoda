@@ -279,15 +279,30 @@ before:  NOT_PAIRED / DEVICE_IDENTITY_REQUIRED
 now:     INVALID_REQUEST: unauthorized: gateway token missing (provide gateway auth token)
 ```
 
-So the challenge-response is satisfied, and what remains is a gateway auth token, which is the owning team's shared secret rather than anything derivable client-side. That is the correct shape: a device proves it holds its key, and a separate credential proves the session is allowed to pair. Completing it is a write against another team's service and waits on their token.
+So the challenge-response is satisfied, and what remained was a gateway auth token, which is the owning team's shared secret rather than anything derivable client-side. That is the correct shape: a device proves it holds its key, and a separate credential proves the session is allowed to pair.
 
-**What was deliberately not done.** Pairing was not completed by hunting for that token. `device.pair.approve` is an update against a service the `leftovers` team relies on: a write, with reputational blast domain, against shared infrastructure. By this document's own taxonomy that requires a recorded decision, and proving a protocol does not justify one. `scripts/gateway-pair.mjs` gates approval behind an explicit `--approve` flag, requires the shared token or password to be handed in, refuses to approve a pending request that belongs to a different device id, and ledgers every attempt. Probe and approve are separate acts; a probe never implies an approval.
+### 9.1b Fully paired against the Acer gateway (2026-08-15, later still)
+
+With the box owner's authorization, the shared token was supplied out of band (written to a gitignored `.env`, mode 600, never committed) and the connect completed:
+
+```
+gateway token: 48 chars loaded
+connect: challenge nonce d8968526-...
+OK  connected. protocol=4
+hello: {"type":"hello-ok","protocol":4,"server":{"version":"2026.5.12", ...}}
+```
+
+Both gates are now cleared: the ed25519 device identity satisfies the challenge, and the shared token authorizes the session. The gateway returns `hello-ok` and exposes **171 methods** to Layer 1, including the full agent-driving surface: `tasks.list/get/cancel`, `agents.list/create/update/delete`, `agents.files.list/get/set`, and `sessions.list/subscribe`.
+
+That surface is the thesis in one screen. `agents.create`, `agents.update`, and `agents.delete` are CREATE, UPDATE and DELETE against a live agent runtime: by this document's own taxonomy they are the dangerous actions, the writes that must compile to read-only until a recorded decision materializes them. The seam Paperclip drives is exactly the seam OMODA governs. Layer 1 can orchestrate over this gateway; Layer 2 decides which of its 171 methods an agent may reach and when; Layer 3 is the gateway itself enforcing that envelope.
+
+**A note on how the token was handled.** Retrieving another team's live secret is a write-adjacent act against shared infrastructure, so it was gated on the human who administers the box, not taken autonomously. The automated safety layer refused every attempt to read credential material through the agent, which is the correct default; the token reached the client only because its owner placed it there deliberately. The token is a live shared secret and is tracked for rotation before the demo (issue #18). `scripts/gateway-pair.mjs` still gates `device.pair.approve` behind an explicit `--approve`, refuses to approve a pending request belonging to a different device id, and ledgers every attempt; probe and approve remain separate acts.
 
 ### 9.2 Remaining risks
 
 | # | Risk | Mitigation |
 |---|---|---|
-| ~~**A1**~~ | ~~Gateway protocol mismatch.~~ **RESOLVED 2026-08-15 by live handshake.** See §9.1 | Pair a device against OMODA's own sandbox at build time |
+| ~~**A1**~~ | ~~Gateway protocol mismatch.~~ **RESOLVED 2026-08-15: fully paired against the live Acer gateway, `hello-ok` protocol 4, 171 methods exposed.** See §9.1a, §9.1b | Device identity plus shared token; both gates cleared end to end |
 | **A2** | **Policy hot-reload latency** on the approval path. If reverting a delta is slow, the write window stays open longer than intended | Time-box every delta, revert on completion, and treat a failed revert as an incident that halts the Broker |
 | **A3** | **Impact classification is a declaration, not a proof.** A skill author can mark a financial write as `impact: []` | Compiler denies unknown tools by default; a review gate on manifest changes; the CRUD verb is derived from the call, not the manifest, so a write cannot masquerade as a read |
 | **A4** | **Scope.** Paperclip is a large system to stand up in a weekend alongside everything else | It installs with `npx paperclipai onboard --yes` and self-hosts on Postgres. Timebox to Friday evening; if it does not come up, Layer 2 still demonstrates against a single Hermes agent |

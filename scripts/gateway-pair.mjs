@@ -14,11 +14,23 @@
 // by a probe, and every attempt lands in the ledger either way.
 
 import { WebSocket } from "ws";
+import { readFileSync, existsSync } from "node:fs";
 import {
   resolveDeviceIdentity, buildConnectParams, createGatewayClient, isPairingError,
   DEFAULT_SCOPES, DEFAULT_CLIENT_ID, DEFAULT_CLIENT_MODE, DEFAULT_CLIENT_VERSION, DEFAULT_ROLE,
 } from "../src/gateway/openclaw.js";
 import { createLedger } from "../src/ledger/ledger.js";
+
+// Load .env (gitignored) so a secret like OPENCLAW_GATEWAY_TOKEN can be supplied
+// out of band, written by whoever owns it, and never read into this transcript.
+// This script only ever prints masked outcomes, never the value.
+(function loadEnvFile(path = ".env") {
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+  }
+})();
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback = null) => {
@@ -71,6 +83,7 @@ async function session({ identity, scopes, authToken, password, label }) {
 async function main() {
   console.log(c.b(`\nOpenClaw gateway ${APPROVE ? "pairing" : "probe"}: ${URL_}\n`));
 
+  info(`gateway token: ${TOKEN ? `${String(TOKEN).length} chars loaded` : "MISSING (not in --token, env, or .env)"}`);
   const identity = resolveDeviceIdentity({ keyPath: KEY_PATH });
   info(`device id  ${identity.deviceId}`);
   info(`key source ${identity.source} (${KEY_PATH})`);
@@ -83,8 +96,14 @@ async function main() {
     primary = await session({ identity, scopes: DEFAULT_SCOPES, authToken: TOKEN, password: PASSWORD, label: "connect" });
     ok(`connected. protocol=${primary.hello?.protocol ?? "?"}`);
     record("connected", { deviceId: identity.deviceId });
-    const info_ = primary.hello ?? {};
-    if (Object.keys(info_).length) info(`hello: ${JSON.stringify(info_).slice(0, 300)}`);
+    const hello = primary.hello ?? {};
+    if (hello.server) info(`server ${hello.server.version} connId=${hello.server.connId}`);
+    const methods = hello.features?.methods ?? [];
+    if (methods.length) {
+      info(`${methods.length} methods exposed to Layer 1`);
+      const agentMethods = methods.filter((m) => /^agent|^task|^session|^run/.test(m));
+      if (agentMethods.length) info(`agent surface: ${agentMethods.slice(0, 12).join(", ")}`);
+    }
     primary.client.close();
     console.log(c.g("\n  This device is paired. The seam is open end to end.\n"));
     return;
