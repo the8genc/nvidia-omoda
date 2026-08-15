@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+// Boot the platform: load skills, compile envelopes, issue identities, serve.
+//
+//   npm start
+//
+// Binds inside our 3100-3199 block and refuses anything else. Service tokens are
+// printed ONCE here and never logged again; rotate before recording the demo.
+
+import { loadSkills, buildCapabilityIndex, mergeFragments } from "./skills/load.js";
+import { createApp } from "./api/server.js";
+import { createTokenStore, createNonceCache, createRateLimiter, assertBindable, SCOPES } from "./api/auth.js";
+import { createIntentStore } from "./api/intents.js";
+import { createLedger } from "./ledger/ledger.js";
+import { createStreamIngest, attachStreamServer } from "./api/stream.js";
+import { createSimulatedPolicy } from "./policy/envelope.js";
+import { createOpenShellPolicy } from "./policy/openshell.js";
+import { fragmentToYaml } from "./policy/compile.js";
+
+const PORT = Number(process.env.OMODA_PORT ?? 3110);
+const STREAM_PORT = Number(process.env.OMODA_STREAM_PORT ?? 3111);
+const HOST = process.env.OMODA_HOST ?? "127.0.0.1";
+const SANDBOX = process.env.OMODA_SANDBOX ?? null;
+
+async function execCli(cmd, args, input) {
+  const { spawn } = await import("node:child_process");
+  return new Promise((resolve) => {
+    const p = spawn(cmd, args);
+    let stdout = "", stderr = "";
+    p.stdout.on("data", (d) => (stdout += d));
+    p.stderr.on("data", (d) => (stderr += d));
+    p.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    p.on("error", (err) => resolve({ code: 1, stdout: "", stderr: err.message }));
+    if (input) { p.stdin.write(input); p.stdin.end(); }
+  });
+}
+
+export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST, sandbox = SANDBOX, print = true } = {}) {
+  assertBindable(port, host);
+  assertBindable(streamPort, host);
+
+  const { skills, errors } = loadSkills();
+  if (errors.length) {
+    // A skill that does not compile must not appear to be enabled.
+    for (const e of errors) console.error(`skill failed to compile: ${e.path}: ${e.error}`);
+    throw new Error(`${errors.length} skill manifest(s) failed to compile; refusing to boot half-configured`);
+  }
+
+  const index = buildCapabilityIndex(skills);
+  const merged = mergeFragments(skills);
+
+  // On the box we drive the real CLIs. Off the box we evaluate the same
+  // compiled fragment in process, so behaviour is identical either way.
+  const policy = sandbox
+    ? createOpenShellPolicy({ sandbox, exec: execCli })
+    : createSimulatedPolicy(merged);
+
+  const tokens = createTokenStore();
+  const operator = tokens.issue({
+    id: "operator:arif",
+    scopes: [SCOPES.PROPOSE, SCOPES.READ, SCOPES.DECIDE, SCOPES.LEDGER, SCOPES.HALT],
+  });
+  // The See feed gets propose and nothing else. This is the keystone.
+  const see = tokens.issue({ id: "see:leftovers", scopes: [SCOPES.PROPOSE] });
+
+  const ledger = createLedger({ path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl" });
+  const intents = createIntentStore();
+
+  const app = createApp({
+    tokens, ledger, intents,
+    nonces: createNonceCache(),
+    limiter: createRateLimiter({ capacity: 120, refillPerSec: 2 }),
+    skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, registry: s.registry })),
+    uiOperator: operator,
+  });
+
+  const ingest = createStreamIngest({ tokens, intents, ledger });
+  await new Promise((r) => app.server.listen(port, host, r));
+
+  const { createServer } = await import("node:http");
+  const streamServer = createServer((_req, res) => { res.writeHead(426); res.end("upgrade required"); });
+  await attachStreamServer({ server: streamServer, ingest });
+  await new Promise((r) => streamServer.listen(streamPort, host, r));
+
+  if (print) {
+    const line = (s) => console.log(s);
+    line("");
+    line("OMODA is up.");
+    line(`  API     http://${host}:${port}`);
+    line(`  UI      http://${host}:${port}/ui`);
+    line(`  stream  ws://${host}:${streamPort}/v1/stream`);
+    line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
+    line("");
+    line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
+    line(`  tools   ${index.size} declared; anything else is denied`);
+    const gated = index.all().filter((c) => c.consent !== "none");
+    line(`  gated   ${gated.length} require a recorded decision: ${gated.map((c) => c.tool).join(", ")}`);
+    const methods = new Set(
+      Object.values(merged.network_policies ?? {})
+        .flatMap((g) => g.endpoints.flatMap((e) => (e.rules ?? []).map((r) => r.allow.method))),
+    );
+    line(`  granted ${[...methods].join(", ") || "nothing"} across every enabled skill`);
+    line("");
+    line("  SERVICE TOKENS, printed once. Do not commit, do not screenshot.");
+    line(`    operator  ${operator.token}`);
+    line(`      secret  ${operator.secret}`);
+    line(`    see       ${see.token}`);
+    line(`      secret  ${see.secret}`);
+    line("");
+  }
+
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see,
+    async close() {
+      await new Promise((r) => app.server.close(r));
+      await new Promise((r) => streamServer.close(r));
+    } };
+}
+
+// Also usable as: node src/boot.js --print-policy
+if (import.meta.url === `file://${process.argv[1]}`) {
+  if (process.argv.includes("--print-policy")) {
+    const { skills } = loadSkills();
+    console.log(fragmentToYaml(mergeFragments(skills)));
+  } else {
+    boot().catch((err) => { console.error(`boot failed: ${err.message}`); process.exit(1); });
+  }
+}

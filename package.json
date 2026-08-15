@@ -11,7 +11,9 @@
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
     "dev": "node src/api/server.js",
     "compliance": "node scripts/compliance-check.mjs",
-    "demo": "node src/demo/run.js"
+    "demo": "node src/demo/run.js",
+    "start": "node src/boot.js",
+    "policy": "node src/boot.js --print-policy"
   },
   "dependencies": {
     "react": "19.2.8",
