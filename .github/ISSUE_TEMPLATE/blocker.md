@@ -1,14 +1,19 @@
 ---
 name: Cross-team blocker
 about: Something another team (or an external dependency) must resolve before we can proceed
-title: "[SEE-TEAM BLOCKER] "
-labels: ["blocked", "needs:see-team"]
+title: "[BLOCKER] "
+labels: ["blocked"]
 ---
 
 <!--
 Use this when the work is blocked on someone outside this repo's build.
-Keep the title prefix. Add a block:Pn priority label (P0 highest). If the owner
-is not the See team, change the needs:* label and the title prefix accordingly.
+
+Specify the owner when you file:
+  - Title: replace [BLOCKER] with [<TEAM> BLOCKER], e.g. [SEE-TEAM BLOCKER].
+  - Labels: add needs:<team> for whichever team owns it (e.g. needs:see-team),
+    plus a block:Pn priority (P0 highest).
+Do not assume a team. If you do not know the owner, name that as the first thing
+to resolve.
 Delete these comments before filing.
 -->
 

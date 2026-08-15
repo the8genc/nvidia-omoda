@@ -6,8 +6,8 @@ Every GitHub issue must carry an **Impact** section: what breaks if it is not
 done, why it lands on the named owner, and what is blocked downstream. This holds
 whether the issue is filed through the template or `gh issue create --body`. The
 full standard is `docs/issue-standard.md`; #13 and #26 are the reference bar.
-Blockers get the `[SEE-TEAM BLOCKER]` title prefix and `blocked` + `needs:<team>`
-+ `block:Pn` labels.
+Blockers get a `[<TEAM> BLOCKER]` title prefix and `blocked` + `needs:<team>` +
+`block:Pn` labels. Name the owning team when filing; do not default to one.
 
 ## Shared infrastructure (the GN100 box)
 

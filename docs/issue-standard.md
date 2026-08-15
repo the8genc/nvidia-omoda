@@ -38,9 +38,14 @@ turns "your move" from an assertion into something the reader can verify.
 
 ## Highlighting a blocker
 
-- Title prefix `[SEE-TEAM BLOCKER]` (or the relevant team).
-- Labels: `blocked`, `needs:<team>`, and a `block:Pn` priority (P0 highest).
-- One filter surfaces them all: `label:needs:see-team`.
+Name the owning team when you file; do not default to one.
+
+- Title prefix `[<TEAM> BLOCKER]`, e.g. `[SEE-TEAM BLOCKER]`.
+- Labels: `blocked`, `needs:<team>` for whichever team owns it, and a `block:Pn`
+  priority (P0 highest). The template pre-applies only `blocked`; you add the team.
+- If you do not know the owner, say so in the issue and make identifying them the
+  first item to resolve.
+- One filter surfaces a given team's blockers: `label:needs:<team>`.
 
 ## The test
 
