@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Integration questions (See team)
+    url: https://github.com/the8genc/nvidia-omoda/blob/main/docs/see-to-do-contract.md
+    about: Read the See-to-Do integration contract before filing an integration blocker.
