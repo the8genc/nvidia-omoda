@@ -12,6 +12,7 @@
     "dev": "node src/api/server.js"
   },
   "dependencies": {
+    "yaml": "^2.9.0",
     "zod": "3.23.8"
   }
 }
