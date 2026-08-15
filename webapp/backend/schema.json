@@ -1,33 +1,42 @@
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3",
+  "note": "This schema IS the entire expressible vocabulary. The scene-graph and twin can emit only the classes and attributes declared here; anything absent (color, make/model, plate, face, skin tone, age, gender, clothing, gait, identity, exact position) is not a suppressed field but an unrepresentable one — the output has no token for it. Privacy is a property of the vocabulary, not of a downstream filter. The public approves and edits this document; that approval defines what the camera may ever say.",
   "camera": { "id": "demo-cam-01", "site": "intersection" },
-  "position_policy": "zone",
+  "position_policy": { "mode": "grid", "cell_meters": 3.0 },
   "zones": ["roadway", "north_crosswalk", "south_crosswalk", "east_crosswalk", "west_crosswalk", "sidewalk", "median"],
   "classes": [
     {
       "name": "vehicle",
       "detector_labels": ["car", "truck", "bus", "motorcycle"],
       "primitive": "generic_vehicle",
-      "allow": ["zone", "heading", "count"],
-      "forbid": ["color", "make_model", "license_plate", "occupants", "exact_position"],
-      "track": "ephemeral_anonymous"
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone":       { "type": "zone",                            "rationale": "coarse location only, never exact" },
+        "heading":    { "type": "degrees",                         "rationale": "direction of travel, traffic flow" },
+        "motion":     { "type": "enum", "values": ["moving", "stopped"], "rationale": "stop-compliance statistic" },
+        "headlights": { "type": "enum", "values": ["on", "off"],   "rationale": "visibility/safety condition" }
+      }
     },
     {
       "name": "person",
       "detector_labels": ["person"],
       "primitive": "generic_avatar",
-      "allow": ["zone", "count"],
-      "forbid": ["face", "skin_tone", "gender", "age", "clothing", "gait", "identity", "exact_position"],
+      "track": "none",
       "aggregate_when_dense": true,
-      "track": "none"
+      "attributes": {
+        "zone":    { "type": "zone",                                              "rationale": "coarse location only, never exact" },
+        "posture": { "type": "enum", "values": ["standing", "walking", "running", "fallen"], "rationale": "safety-relevant, non-identifying" }
+      }
     },
     {
       "name": "cyclist",
       "detector_labels": ["bicycle"],
       "primitive": "generic_bicycle",
-      "allow": ["zone", "heading", "count"],
-      "forbid": ["identity", "exact_position"],
-      "track": "ephemeral_anonymous"
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone":    { "type": "zone",    "rationale": "coarse location only, never exact" },
+        "heading": { "type": "degrees", "rationale": "direction of travel" }
+      }
     }
   ],
   "statistics": ["per_zone_counts", "stop_compliance", "crossing_events"],

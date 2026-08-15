@@ -1,4 +1,4 @@
-// Concern: decodes a little-endian cloud.bin buffer into a PointCloud | Non-concern: fetching or rendering it (PointCloudPanel/scene own that) | IO: (ArrayBuffer) -> PointCloud
+// Concern: decodes a little-endian cloud.bin buffer into a PointCloud | Non-concern: fetching or rendering it (PrimitiveTwinPanel/usePointCloudScene own that) | IO: (ArrayBuffer) -> PointCloud
 import type { PointCloud } from '@/types/pipeline'
 
 export function parseCloudBin(buffer: ArrayBuffer): PointCloud {

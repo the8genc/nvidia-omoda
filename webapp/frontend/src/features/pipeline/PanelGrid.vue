@@ -3,7 +3,7 @@
 import RawRgbPanel from '@/features/pipeline/panels/RawRgbPanel.vue'
 import DepthPanel from '@/features/pipeline/panels/DepthPanel.vue'
 import SegPanel from '@/features/pipeline/panels/SegPanel.vue'
-import PointCloudPanel from '@/features/pipeline/panels/PointCloudPanel.vue'
+import PrimitiveTwinPanel from '@/features/pipeline/panels/PrimitiveTwinPanel.vue'
 </script>
 
 <template>
@@ -11,7 +11,7 @@ import PointCloudPanel from '@/features/pipeline/panels/PointCloudPanel.vue'
     <RawRgbPanel class="grid__cell" />
     <DepthPanel class="grid__cell" />
     <SegPanel class="grid__cell" />
-    <PointCloudPanel class="grid__cell" />
+    <PrimitiveTwinPanel class="grid__cell" />
   </div>
 </template>
 

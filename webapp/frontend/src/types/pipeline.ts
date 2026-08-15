@@ -21,6 +21,26 @@ export interface PointCloud {
   labelColors: Float32Array
 }
 
+// A single generic drawable the engine renders verbatim, holding no class or vocabulary meaning
+export interface RenderPrimitive {
+  shape: string
+  size: [number, number, number]
+  position: [number, number, number]
+  rotation_y: number
+  color: [number, number, number]
+}
+
+export interface RenderGround {
+  extent: [number, number, number, number]
+  y: number
+}
+
+export interface RenderFrame {
+  frame: number
+  ground: RenderGround
+  primitives: RenderPrimitive[]
+}
+
 export interface PlaybackContext {
   currentFrame: Readonly<Ref<number>>
   playing: Readonly<Ref<boolean>>
@@ -44,6 +64,7 @@ export interface JobContext {
   submitVideo: (file: File) => Promise<void>
   frameAssetUrl: (index: number, asset: FrameAsset) => string
   cloudUrl: (index: number) => string
+  renderUrl: (index: number) => string
 }
 
 export const PLAYBACK_KEY: InjectionKey<PlaybackContext> = Symbol('playback')

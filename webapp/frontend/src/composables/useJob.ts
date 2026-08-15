@@ -1,6 +1,6 @@
 // Concern: uploads video to /process, polls the manifest, exposes status + frame/cloud URLs | Non-concern: which frame shows or asset decode (usePlayback/panels own that) | IO: (cb) -> JobContext
 import { onUnmounted, readonly, ref } from 'vue'
-import { frameUrl, jobUrl, processUrl } from '@/api/config'
+import { frameUrl, jobUrl, processUrl, renderUrl as buildRenderUrl } from '@/api/config'
 import type { FrameAsset, JobContext, JobManifest, JobStatus } from '@/types/pipeline'
 
 const POLL_INTERVAL_MS = 900
@@ -87,6 +87,11 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
     return frameUrl(jobId.value, index, 'cloud.bin')
   }
 
+  function renderUrl(index: number): string {
+    if (!jobId.value) return ''
+    return buildRenderUrl(jobId.value, index)
+  }
+
   onUnmounted(() => {
     stopPolling()
   })
@@ -100,6 +105,7 @@ export function useJob(onManifest: (manifest: JobManifest) => void): JobContext 
     uploading: readonly(uploading),
     submitVideo,
     frameAssetUrl,
-    cloudUrl
+    cloudUrl,
+    renderUrl
   }
 }

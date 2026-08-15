@@ -12,3 +12,7 @@ export function jobUrl(jobId: string): string {
 export function frameUrl(jobId: string, index: number, asset: string): string {
   return `${API_BASE}/jobs/${jobId}/frames/${index}/${asset}`
 }
+
+export function renderUrl(jobId: string, index: number): string {
+  return frameUrl(jobId, index, 'render.json')
+}
