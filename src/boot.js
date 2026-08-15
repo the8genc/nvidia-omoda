@@ -15,6 +15,21 @@ import { createStreamIngest, attachStreamServer } from "./api/stream.js";
 import { createSimulatedPolicy } from "./policy/envelope.js";
 import { createOpenShellPolicy } from "./policy/openshell.js";
 import { fragmentToYaml } from "./policy/compile.js";
+import { createTelegramClient, createHttpTransport } from "./channels/telegram.js";
+import { createTelegramLoop } from "./channels/telegram-loop.js";
+import { readFileSync, existsSync } from "node:fs";
+
+/** Minimal .env reader. Avoids depending on a --env-file flag being available. */
+function loadEnvFile(path = ".env") {
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+    if (!m) continue;
+    const [, k, v] = m;
+    if (process.env[k] === undefined) process.env[k] = v.trim();
+  }
+}
+loadEnvFile();
 
 const PORT = Number(process.env.OMODA_PORT ?? 3110);
 const STREAM_PORT = Number(process.env.OMODA_STREAM_PORT ?? 3111);
@@ -81,6 +96,24 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   await attachStreamServer({ server: streamServer, ingest });
   await new Promise((r) => streamServer.listen(streamPort, host, r));
 
+  // ── Telegram, only if configured, and only if it can fail closed ──────
+  let telegram = null;
+  const tgToken = process.env.TELEGRAM_BOT_TOKEN;
+  const tgIds = (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (tgToken && tgIds.length === 0) {
+    console.warn(
+      "\n  TELEGRAM: token present but TELEGRAM_ALLOWED_IDS is empty.\n" +
+      "  Refusing to start the operator loop: an empty allowlist trusts nobody,\n" +
+      "  so the loop would accept a tap from anyone who finds the bot.\n" +
+      "  Message the bot, then set the numeric id.\n",
+    );
+  } else if (tgToken) {
+    const transport = createHttpTransport({ token: tgToken });
+    const client = createTelegramClient({ transport, allowedIds: tgIds });
+    telegram = createTelegramLoop({ client, intents, ledger, policy, operator, transport });
+    telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
+  }
+
   if (print) {
     const line = (s) => console.log(s);
     line("");
@@ -89,6 +122,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${host}:${streamPort}/v1/stream`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
+    line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}]` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
     line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
     line(`  tools   ${index.size} declared; anything else is denied`);
@@ -108,8 +142,9 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram,
     async close() {
+      telegram?.stop();
       await new Promise((r) => app.server.close(r));
       await new Promise((r) => streamServer.close(r));
     } };
