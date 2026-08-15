@@ -22,6 +22,16 @@ registering.
    labeled *surface*, not a populated street with separated objects. → separated objects require the
    **detector (B2)**, spawned next; that is what turns the relief into a scene and enables the twin.
 
+## Blind gate on the legibility-fixed render (ran)
+The neutral reviewer independently read repr_08 as "a 3D terrain-like surface with point-cloud texture,
+a muted purple base overlaid with olive-green patches, grey blotches, and intense hot-pink spots,
+viewed obliquely with near/far depth cues." → the **labels are now legible** (distinct colored regions
+surfaced without prompting), the structure is **coherent** (no noise/flicker contradiction), but it
+reads as **terrain, not a street** — the 2.5D-relief limit again. The "coherent labeled surface" is met;
+"populated scene" is not, and depends on separated objects (B2).
+
 ## Decision
-**Stage-C stability: proven.** The blind scene-gate is **deferred** to the legibility-fixed render, and
-the "populated scene" depends on B2. Both follow-ups launched in parallel.
+**Stage-C closes: stability + legible labeling proven.** The stabilized labeled point-cloud stream —
+the bet's spine (continuous, temporally-stable, semantically-labeled, PII-safe, fully local) — holds.
+The remaining gap to a *digital twin* is separated objects on the stable ground, owned by B2 (detector,
+in flight) → Stage D (fuse objects onto the anchored ground).

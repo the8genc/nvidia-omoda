@@ -5,3 +5,5 @@ __pycache__/
 *overlay*.png
 .frame*
 .diff*
+.det*
+.b1_*
