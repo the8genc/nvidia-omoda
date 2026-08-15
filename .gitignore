@@ -7,3 +7,7 @@ __pycache__/
 .diff*
 .det*
 .b1_*
+webapp/backend/jobs/
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+webapp/**/__pycache__/

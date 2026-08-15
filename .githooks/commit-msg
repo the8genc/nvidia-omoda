@@ -11,3 +11,9 @@ git agent-verdict "$1" webapp \
   --doc /home/fredrik/.knowledge-base/coding-standards/vue3-project-standards.md \
   --rule "every comment is a single line; block comments and multi-line comment runs are forbidden" \
   --path webapp
+
+# The ROADMAP must stay at strategic altitude — implementation minutiae belong in code and results, not here.
+git agent-verdict "$1" roadmap \
+  --rule "every line stays at the altitude of a high-level roadmap: the bet, workstreams, goals, and named acceptance gates only — no implementation minutiae (no file:line references, no CLI flags or commands, no code-level or config-level detail)" \
+  --rule "each entry is at most one sentence; the reader is an expert already versed in the work, so state the point once with no elaboration, restatement, or second sentence" \
+  --path ROADMAP.md
