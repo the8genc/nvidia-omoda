@@ -48,31 +48,50 @@ export class RoutingRefused extends Error {
  * @returns {{model:string, endpoint:string, egress:'local'|'hosted', reason:string}}
  * @throws {RoutingRefused} when a caller asks to send a sensitive payload off-box
  */
-export function route({ task, payload, multimodal = false, hostedAvailable = true, declaredSensitive = false } = {}) {
+export function route({
+  task, payload, multimodal = false,
+  hostedAvailable = true, localAvailable = true,
+  declaredSensitive = false,
+} = {}) {
   const sensitive = isSensitive(payload, { declaredSensitive });
 
   // Rule 2: multimodal always goes to Omni. It is the only model that takes it.
   if (multimodal || task === TASK.PERCEIVE) {
+    if (!localAvailable) {
+      // There is no hosted fallback for perception. Sending frames off-box
+      // would defeat the reason perception is local in the first place.
+      throw new RoutingRefused("perception requires the local model; refusing to send media off-box");
+    }
     return { model: MODEL.OMNI, endpoint: ENDPOINT.LOCAL, egress: "local", reason: "multimodal or perception" };
   }
 
-  // Rule 1: sensitive payloads are local only, and asking otherwise is refused
-  // rather than silently downgraded, so the attempt shows up in the ledger.
+  // Rule 1: sensitive payloads are local only. If local is down there is no
+  // fallback: falling back to hosted would be exactly the leak this rule exists
+  // to prevent, so we refuse and the attempt lands in the ledger.
   if (sensitive) {
-    if (task === TASK.PLAN && !hostedAvailable) {
-      return { model: MODEL.OMNI, endpoint: ENDPOINT.LOCAL, egress: "local", reason: "sensitive, hosted unavailable" };
+    if (!localAvailable) {
+      throw new RoutingRefused("sensitive payload and the local model is unavailable; refusing to route it off-box");
     }
     return { model: MODEL.OMNI, endpoint: ENDPOINT.LOCAL, egress: "local", reason: "sensitive payload, local only" };
   }
 
   // Risk classification stays local: it runs on every action and must not add
-  // an egress dependency to the hot path of the gate itself.
+  // an egress dependency to the hot path of the gate itself. If local is down,
+  // the Broker falls back to STATIC classification rather than a hosted model,
+  // because the gate must not depend on an off-box call to decide.
   if (task === TASK.CLASSIFY) {
+    if (!localAvailable) {
+      return { model: null, endpoint: null, egress: "none", degraded: true,
+        reason: "local model unavailable; Broker uses static rules only and escalates when inconclusive" };
+    }
     return { model: MODEL.OMNI, endpoint: ENDPOINT.LOCAL, egress: "local", reason: "classifier stays on the gate's hot path" };
   }
 
   // Rule 3: planning prefers Lightning, falls back to Omni with a recorded caveat.
   if (!hostedAvailable) {
+    if (!localAvailable) {
+      throw new RoutingRefused("neither the hosted planner nor the local model is available");
+    }
     return { model: MODEL.OMNI, endpoint: ENDPOINT.LOCAL, egress: "local", reason: "hosted unavailable, quality caveat recorded", degraded: true };
   }
   return { model: MODEL.PLANNER, endpoint: ENDPOINT.HOSTED, egress: "hosted", reason: "planning and tool selection" };

