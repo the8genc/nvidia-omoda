@@ -14,7 +14,8 @@
     "demo": "node src/demo/run.js",
     "start": "node src/boot.js",
     "policy": "node src/boot.js --print-policy",
-    "demo:live": "node src/demo/live-telegram.js"
+    "demo:live": "node src/demo/live-telegram.js",
+    "serve:live": "node src/demo/serve-live.js"
   },
   "dependencies": {
     "react": "19.2.8",
