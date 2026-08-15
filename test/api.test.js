@@ -161,3 +161,30 @@ test("S11: refuses to bind outside the port block or on a public interface", () 
   assert.throws(() => assertBindable(3110, "0.0.0.0"), /not public/);
   assert.equal(assertBindable(3110, "127.0.0.1"), true);
 });
+
+test("S6: the per-token rate limit actually bites, and is per token", async () => {
+  const { createRateLimiter } = await import("../src/api/auth.js");
+  const limiter = createRateLimiter({ capacity: 3, refillPerSec: 0 });
+  const t0 = Date.now();
+  assert.equal(limiter.take("see:cam3", t0), true);
+  assert.equal(limiter.take("see:cam3", t0), true);
+  assert.equal(limiter.take("see:cam3", t0), true);
+  assert.equal(limiter.take("see:cam3", t0), false, "the fourth call in the window is shed");
+  assert.equal(limiter.take("operator:arif", t0), true, "a noisy feed cannot starve the operator");
+});
+
+test("S10: a token secret never leaves the store", async () => {
+  const { createTokenStore } = await import("../src/api/auth.js");
+  const store = createTokenStore();
+  const t = store.issue({ id: "see:cam3", scopes: ["intent:propose"] });
+  const listed = store.all();
+  assert.ok(!("secret" in listed[0]), "listing identities must not expose the signing secret");
+  assert.ok(!JSON.stringify(listed).includes(t.secret), "the secret is not serializable from a listing");
+});
+
+test("S12: an unauthenticated call is never ledgered as if it were real", async () => {
+  const { app } = harness();
+  const before = app.ledger.length;
+  await call(app, { path: "/v1/ledger" }); // no token
+  assert.equal(app.ledger.length, before, "auth failures do not pollute the action ledger");
+});
