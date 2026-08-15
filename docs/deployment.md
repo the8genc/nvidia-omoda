@@ -6,6 +6,29 @@ passing run on a laptop is necessary but never sufficient. The box is the source
 of truth because the box is where this runs: the GPU, the OpenShell gateway, the
 vLLM, and the systemd service all live there and none of them exist on a laptop.
 
+## No workstation is part of the system
+
+A laptop is for editing code. Nothing at runtime may depend on one. Concretely:
+
+- **Every demo and script defaults to the box's own addresses.** The gateway is
+  `ws://127.0.0.1:18789` on the box, not a tunnel port. `OPENCLAW_GATEWAY_URL`
+  exists so a developer can point at an SSH tunnel; that is a convenience for
+  development and never how it is deployed or demonstrated.
+- **Secrets live on the box.** `/home/arif/omoda/.env`, mode 600, gitignored:
+  the Telegram token and allowlist, and the OpenClaw gateway token. systemd loads
+  it as an `EnvironmentFile`, so nothing is passed on a command line.
+- **Identity is generated on the box.** The ed25519 device key that authenticates
+  to the gateway is created on first run at `var/device/openclaw-device.key`
+  (gitignored, mode 600). It is deliberately not copied from a laptop, so the
+  identity that talks to the gateway lives where the system lives.
+- **The model is on the box.** Local Nemotron on `:8000`, no hosted API key
+  anywhere in the deployment.
+
+The test: kill every SSH tunnel from the workstation, then run
+`ssh gn100 'cd /home/arif/omoda && node src/demo/three-layer.js'`. It must pass.
+That is checked automatically in the smoke section below, which runs the demo on
+the device and asserts its four properties.
+
 ## The only deploy path
 
 ```
@@ -30,6 +53,13 @@ It runs from a workstation and does, in order, aborting RED on any failure:
    - `GET /v1/ledger` with no token returns 401/403 (auth is enforced, not bypassed)
    - the boot log shows the **OpenShell sandbox** policy, i.e. real Layer 3, not the
      in-process simulator
+   - the local **Nemotron answers on `:8000`**, because a degraded planner leaves
+     every process looking healthy while half the system's claims stop being
+     demonstrable
+   - **all three layers run end to end** against the live gateway, asserted on
+     substance rather than exit code: the gateway said `hello-ok`, the read ran
+     with no human in the loop, the write reverted to `403`, and the prohibited
+     call was refused by `gateway-self-protection`
 
 Only if all of that passes does it print `GREEN on the device`.
 
