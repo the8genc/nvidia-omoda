@@ -98,6 +98,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
 
   // ── Telegram, only if configured, and only if it can fail closed ──────
   let telegram = null;
+  let telegramClient = null;
   const tgToken = process.env.TELEGRAM_BOT_TOKEN;
   const tgIds = (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (tgToken && tgIds.length === 0) {
@@ -109,8 +110,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     );
   } else if (tgToken) {
     const transport = createHttpTransport({ token: tgToken });
-    const client = createTelegramClient({ transport, allowedIds: tgIds });
-    telegram = createTelegramLoop({ client, intents, ledger, policy, operator, transport });
+    telegramClient = createTelegramClient({ transport, allowedIds: tgIds });
+    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
   }
 
@@ -142,7 +143,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient,
     async close() {
       telegram?.stop();
       await new Promise((r) => app.server.close(r));

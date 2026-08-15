@@ -13,7 +13,8 @@
     "compliance": "node scripts/compliance-check.mjs",
     "demo": "node src/demo/run.js",
     "start": "node src/boot.js",
-    "policy": "node src/boot.js --print-policy"
+    "policy": "node src/boot.js --print-policy",
+    "demo:live": "node src/demo/live-telegram.js"
   },
   "dependencies": {
     "react": "19.2.8",
