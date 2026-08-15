@@ -1,0 +1,17 @@
+{
+  "name": "omoda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
+    "dev": "node src/api/server.js"
+  },
+  "dependencies": {
+    "zod": "3.23.8"
+  }
+}
