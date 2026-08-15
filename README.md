@@ -8,6 +8,39 @@ Sibling project: [`the8genc/leftovers`](https://github.com/the8genc/leftovers) (
 
 ---
 
+## Status, 2026-08-15
+
+Built and deployed. Running on the box under systemd, not a laptop demo.
+
+| | |
+|---|---|
+| Broker, Action API, SSR UI, WebSocket ingest | live on the GB10, `omoda.service`, survives reboot |
+| Policy enforcement | real OpenShell sandbox, not an in-process simulation |
+| Nemotron | local vLLM, NVFP4, 64k context, **choosing tools in the live path** |
+| Operator channel | Telegram, real approvals recorded end to end |
+| Layer 1 seam | paired to the OpenClaw gateway, protocol 4, 171 methods |
+| Tests | **161 passing**, 94.36% line coverage, compliance gate green |
+
+Measured, including where it fell short:
+
+- **A financial write is absent from policy until a decision exists.** Live: `403`,
+  a real phone tap, `POST` allowed for exactly one call, `403` again, zero open deltas.
+- **Nemotron picked `quickbooks.invoice.create`** for a real intent in 8.0 s on the box,
+  and returned `tool: null` when an intent tried to talk it into `shell.exec`.
+- **G1 autonomy ratio: 3.00x, not the 10x we targeted.** The human touches 3 of 9
+  actions instead of 9 of 9. The ratio is bounded by how many actions are
+  consequential, so this is the shape of the task, not a tuning knob. Reported as
+  measured; `node scripts/benchmark-g1.mjs` reproduces it.
+- **One Nemotron in two roles, not two models.** The box caches one and has no
+  hosted API key, so the second model earlier drafts described could never have run.
+
+Blocked on the See team: detector classes, the manual runbook, and the WebSocket
+direction ([#13](https://github.com/the8genc/nvidia-omoda/issues/13),
+[#25](https://github.com/the8genc/nvidia-omoda/issues/25),
+[#26](https://github.com/the8genc/nvidia-omoda/issues/26)).
+
+---
+
 ## The idea in one paragraph
 
 Every agent platform holds dangerous capability open and asks the model not to use it yet. A system prompt is not a security boundary, and an approval checked in application code is only as good as the code. OMODA inverts this. Any action that can cost money, create legal liability, or speak in our name compiles to a policy that grants `GET` and nothing else, so the write method is **absent from the sandbox**. A recorded human decision is what materialises it, scoped to one method on one path and time boxed, and the runtime revokes it afterwards. Everything that is not such an action runs unattended at full speed.
@@ -34,7 +67,7 @@ Nine tools, five of them consequential, and not one write method exists yet.
 
 Paperclip governs the deliverable. Nothing governed the blast radius. Its own runtime doc says local adapters "run unsandboxed on the host machine". OMODA is the layer that makes a consent decision physically govern a capability.
 
-The seam is verified, not assumed: replaying Paperclip's `openclaw_gateway` handshake against the box returned `connect.challenge` on protocol v4 and refused only on `DEVICE_IDENTITY_REQUIRED`. See `prd/ARCHITECTURE-ANALYSIS.md` section 9.1.
+The seam is not assumed, and no longer merely verified: we are **paired to the live gateway**. `src/gateway/openclaw.js` reproduces Paperclip's protocol v4 exactly, ed25519 device identity and all, and the gateway answers `hello-ok` on protocol 4 exposing 171 methods, including `agents.create/update/delete`, which are precisely the CRUD writes the taxonomy governs. See `prd/ARCHITECTURE-ANALYSIS.md` sections 9.1a and 9.1b.
 
 ---
 
@@ -55,12 +88,19 @@ Reads are safe. Writes are governed. Writes that can produce a dangerous outcome
 
 ```bash
 npm install
-npm test            # 112 tests
+npm test            # 161 tests
 npm run demo        # the whole narrative, end to end
 npm start           # API, UI and stream ingress
 npm run policy      # print the compiled envelope for every enabled skill
 npm run compliance  # fail the build on any dependency outside the hackathon rule
+
+node scripts/benchmark-g1.mjs      # the autonomy measurement, counted from the ledger
+bash scripts/deploy-box.sh         # deploy to the Spark; green only if the BOX says so
 ```
+
+Deployment is not a laptop concern: `deploy-box.sh` syncs the box, asserts the git
+tree hash matches, runs the suite **on the device**, restarts the service, then smoke
+tests the live process. See [`docs/deployment.md`](docs/deployment.md).
 
 `npm run demo` walks the full path: a camera proposes work it cannot authorise, an injection attempt in the evidence is redacted, the financial write is refused by policy, a human decision creates the capability, the capability is revoked, and the hash chain verifies.
 
