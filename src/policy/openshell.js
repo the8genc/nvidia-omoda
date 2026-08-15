@@ -35,8 +35,12 @@ export function createOpenShellPolicy({ sandbox, exec, dryRun = false, ttlMs = D
   const open = new Map(); // actionId -> { id, host, method, path, expiresAt }
 
   async function readPolicy() {
-    const r = await exec("nemoclaw", [sandbox, "policy", "get"]);
-    if (r.code !== 0) throw new PolicyApplyError(`policy get failed: ${r.stderr.trim() || r.code}`);
+    // `policy-get`, hyphenated. The CLI takes `nemoclaw <sandbox> policy-get`;
+    // `policy get` parses as an unknown action named "policy" and exits 1, which
+    // this adapter then reported as a policy failure. It only surfaced when the
+    // command was finally run against the real CLI on the box.
+    const r = await exec("nemoclaw", [sandbox, "policy-get"]);
+    if (r.code !== 0) throw new PolicyApplyError(`policy-get failed: ${r.stderr.trim() || r.code}`);
     try {
       return parse(r.stdout) ?? {};
     } catch (err) {

@@ -21,7 +21,7 @@ function fakeBox({ protocol = "rest", breakRevert = false } = {}) {
   const calls = [];
   const exec = async (cmd, args, input) => {
     calls.push(`${cmd} ${args.join(" ")}`);
-    if (cmd === "nemoclaw" && args.includes("get")) {
+    if (cmd === "nemoclaw" && args.includes("policy-get")) {
       return { code: 0, stdout: stringify(doc), stderr: "" };
     }
     if (cmd === "openshell" && args.includes("set")) {
@@ -59,7 +59,11 @@ test("applyDelta adds exactly one method and the round trip uses the documented 
     false,
     "a sibling path stays closed",
   );
-  assert.ok(box.calls.some((c) => c.startsWith("nemoclaw omoda policy get")));
+  // The real CLI verb is hyphenated. This assertion previously matched the
+  // adapter's own wrong string, so it proved the code agreed with itself and
+  // nothing else; the break only showed up running against the CLI on the box.
+  assert.ok(box.calls.some((c) => c.startsWith("nemoclaw omoda policy-get")),
+    `expected a policy-get call, got: ${box.calls.join(" | ")}`);
   assert.ok(box.calls.some((c) => c.includes("openshell policy set")));
 });
 
