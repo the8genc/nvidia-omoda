@@ -1,0 +1,27 @@
+{
+  "name": "omoda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
+    "dev": "node src/api/server.js",
+    "compliance": "node scripts/compliance-check.mjs",
+    "demo": "node src/demo/run.js",
+    "start": "node src/boot.js",
+    "policy": "node src/boot.js --print-policy",
+    "demo:live": "node src/demo/live-telegram.js",
+    "serve:live": "node src/demo/serve-live.js"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "ws": "8.21.1",
+    "yaml": "2.9.0",
+    "zod": "3.23.8"
+  }
+}

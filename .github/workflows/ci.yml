@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "arif/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+      - name: tests
+        run: npm test
+      - name: safety negatives must pass
+        run: node --test test/negatives.test.js
+      - name: compliance (two-week open-source rule)
+        run: npm run compliance
+      - name: the demo must run end to end
+        run: npm run demo

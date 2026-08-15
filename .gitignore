@@ -1,0 +1,6 @@
+node_modules/
+var/
+*.log
+.env
+.DS_Store
+var/device/
