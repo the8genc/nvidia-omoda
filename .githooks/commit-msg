@@ -16,7 +16,8 @@ git agent-verdict "$1" webapp \
 # All Python — the backend pipeline and the research scripts — is reviewed against the language-agnostic standard.
 git agent-verdict "$1" python \
   --doc /home/fredrik/.knowledge-base/coding-standards/language-agnostic-programming-standards.md \
-  --path scripts webapp/backend/app.py
+  --path scripts \
+  --path webapp/backend/app.py
 
 # The ROADMAP must stay at strategic altitude — implementation minutiae belong in code and results, not here.
 git agent-verdict "$1" roadmap \
