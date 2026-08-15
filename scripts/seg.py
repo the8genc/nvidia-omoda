@@ -54,7 +54,8 @@ frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 processor = SegformerImageProcessor.from_pretrained(MODEL_ID)
 model = SegformerForSemanticSegmentation.from_pretrained(MODEL_ID).to(device).eval()
 
-inputs = processor(images=frame_rgb, return_tensors="pt").to(device)
+# feed the frame at native aspect: the default 512x512 square resize destroyed the 16:9 aspect and made SegFormer unstable
+inputs = processor(images=frame_rgb, do_resize=False, return_tensors="pt").to(device)
 with torch.no_grad():
     logits = model(**inputs).logits
 
