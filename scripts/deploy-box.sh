@@ -27,7 +27,18 @@ git rev-parse --verify "$REF" >/dev/null 2>&1 || die "ref '$REF' does not exist"
 echo "  box: $BOX:$DIR   deploying ref: $REF"
 
 step "Sync box to $REF and install dependencies"
-sshb "cd $DIR && git fetch -q origin && git checkout -q \$(git rev-parse --abbrev-ref $REF 2>/dev/null || echo main) 2>/dev/null; git reset -q --hard $REF && echo '  box now at' \$(git rev-parse --short HEAD)" || die "git sync failed on the box"
+# The venue network drops github.com resolution intermittently. A failed fetch
+# leaves the box on an older commit and the parity check below catches it, but
+# a retry here turns a hard abort into a pause. Three attempts, then give up
+# loudly rather than deploying something stale.
+fetched=0
+for attempt in 1 2 3; do
+  if sshb "cd $DIR && git fetch -q origin 2>/dev/null"; then fetched=1; break; fi
+  echo "  fetch attempt $attempt failed (DNS or network); retrying in 5s"
+  sleep 5
+done
+[ "$fetched" = 1 ] || die "could not fetch on the box after 3 attempts; check DNS: ssh $BOX 'getent hosts github.com'"
+sshb "cd $DIR && git checkout -q \$(git rev-parse --abbrev-ref $REF 2>/dev/null || echo main) 2>/dev/null; git reset -q --hard $REF && echo '  box now at' \$(git rev-parse --short HEAD)" || die "git sync failed on the box"
 sshb "cd $DIR && npm ci >/tmp/omoda-npm.log 2>&1 && echo '  deps installed' || { tail -5 /tmp/omoda-npm.log; exit 1; }" || die "npm ci failed on the box"
 
 step "Parity check: box tree must equal $REF exactly"
