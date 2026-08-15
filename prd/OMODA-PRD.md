@@ -35,6 +35,13 @@ missed the measured number is given.
   Verified live: `403` before a real Telegram tap, `POST` allowed for exactly one
   call, `403` after, zero open deltas.
 - The gateway handshake is real: ed25519 device identity, `hello-ok`, protocol 4.
+- **All three layers run together against the live gateway** (`npm run demo:layers`).
+  A governed read (`agents.list`) returns real data from another team's runtime with
+  no human involved; a governed write (`cron.add`) is `403` until a decision exists,
+  `200` for exactly one call, `403` after, zero open deltas; and
+  `exec.approvals.set` is refused **while holding a valid approval**, because turning
+  off the gateway's own execution approvals is on the prohibited list. The gateway's
+  171-method admin surface is governed by the same two axes as a QuickBooks invoice.
 - Nemotron chose `quickbooks.invoice.create` for a real intent in 8.0 s on the box,
   and returned `tool: null` when an intent tried to talk it into `shell.exec`.
 
@@ -46,7 +53,7 @@ missed the measured number is given.
 | G7 multi-model | **One model in two roles**, not two models. No second Nemotron on the box, no hosted key; see §7 |
 | See-track integration | Blocked on the See team: detector classes, runbook, WebSocket direction (issues #13, #20, #25, #26, #27) |
 | `incident-response` skill | Capability list is still a placeholder pending that runbook |
-| Paperclip orchestration | Seam paired and proven; Paperclip is not yet driving a full task through it |
+| Paperclip orchestration | **Closed.** Paperclip's exact protocol now drives real work through the gateway under OMODA's governance: `npm run demo:layers`. Paperclip's own scheduler is not wired up; the wire contract it uses is |
 
 ---
 
