@@ -1,0 +1,45 @@
+{
+  "schema_version": "0.1",
+  "camera": { "id": "demo-cam-01", "site": "intersection" },
+  "position_policy": "zone",
+  "zones": ["roadway", "north_crosswalk", "south_crosswalk", "east_crosswalk", "west_crosswalk", "sidewalk", "median"],
+  "classes": [
+    {
+      "name": "vehicle",
+      "detector_labels": ["car", "truck", "bus", "motorcycle"],
+      "primitive": "generic_vehicle",
+      "allow": ["zone", "heading", "count"],
+      "forbid": ["color", "make_model", "license_plate", "occupants", "exact_position"],
+      "track": "ephemeral_anonymous"
+    },
+    {
+      "name": "person",
+      "detector_labels": ["person"],
+      "primitive": "generic_avatar",
+      "allow": ["zone", "count"],
+      "forbid": ["face", "skin_tone", "gender", "age", "clothing", "gait", "identity", "exact_position"],
+      "aggregate_when_dense": true,
+      "track": "none"
+    },
+    {
+      "name": "cyclist",
+      "detector_labels": ["bicycle"],
+      "primitive": "generic_bicycle",
+      "allow": ["zone", "heading", "count"],
+      "forbid": ["identity", "exact_position"],
+      "track": "ephemeral_anonymous"
+    }
+  ],
+  "statistics": ["per_zone_counts", "stop_compliance", "crossing_events"],
+  "reveal_policy": {
+    "default": "locked",
+    "break_glass": {
+      "authority": "local_agent (open policy, external)",
+      "unlocks": ["raw_frame_stream"],
+      "window_seconds": 60,
+      "extendable": true,
+      "audit": "every reveal logged with the agent's stated rationale"
+    }
+  },
+  "raw_retention": { "buffer_seconds": 60, "disposition": "discarded_after_buffer" }
+}

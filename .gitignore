@@ -11,3 +11,4 @@ webapp/backend/jobs/
 webapp/frontend/node_modules/
 webapp/frontend/dist/
 webapp/**/__pycache__/
+.undistort*
