@@ -93,6 +93,7 @@ export async function authorize(action = {}, ctx = {}) {
   // 4a. Reads are safe.
   if (tier === TIER.SAFE) {
     const out = await execute(action);
+    record({ tier, authority: "envelope", outcome: "executed", ofSeq: entry.seq });
     return executed(tier, "envelope", { ledgerSeq: entry.seq, result: out });
   }
 
@@ -102,6 +103,7 @@ export async function authorize(action = {}, ctx = {}) {
       return refused(tier, "no inverse registered: an update or delete must be reversible before it runs");
     }
     const out = await execute(action);
+    record({ tier, authority: "envelope", outcome: "executed", ofSeq: entry.seq });
     return executed(tier, "envelope", { ledgerSeq: entry.seq, result: out, undoToken: action.inverse ? entry.hash.slice(0, 12) : null });
   }
 
@@ -128,6 +130,13 @@ export async function authorize(action = {}, ctx = {}) {
   try {
     delta = await policy.applyDelta(action, ctx.decision);
     const out = await execute(action);
+    record({
+      tier,
+      authority: `decision:${ctx.decision.decisionId}`,
+      outcome: "executed",
+      ofSeq: entry.seq,
+      decidedBy: ctx.decision.decidedBy,
+    });
     return executed(tier, `decision:${ctx.decision.decisionId}`, {
       ledgerSeq: entry.seq,
       result: out,

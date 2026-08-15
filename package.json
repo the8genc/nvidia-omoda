@@ -10,7 +10,8 @@
     "test": "node --test test/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
     "dev": "node src/api/server.js",
-    "compliance": "node scripts/compliance-check.mjs"
+    "compliance": "node scripts/compliance-check.mjs",
+    "demo": "node src/demo/run.js"
   },
   "dependencies": {
     "ws": "8.21.1",
