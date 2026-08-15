@@ -1,41 +1,26 @@
-<!-- Concern: top bar showing product identity, job status readout, and the dropzone | Non-concern: drag/pick mechanics or upload (VideoDropzone/useJob own that) | IO: (job context) -> header -->
+<!-- Concern: top bar with identity, a live indicator, and the drop-video control that sets the live source | Non-concern: drag/pick (VideoDropzone owns that) | IO: (live) -> header -->
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Boxes } from 'lucide-vue-next'
-import StatusDot from '@/ui/StatusDot.vue'
+import { ref } from 'vue'
+import { Boxes, Radio } from 'lucide-vue-next'
 import VideoDropzone from '@/features/pipeline/VideoDropzone.vue'
-import { JOB_KEY } from '@/types/pipeline'
+import { LIVE_KEY } from '@/types/pipeline'
 import { injectStrict } from '@/composables/injectStrict'
 
-const job = injectStrict(JOB_KEY)
+const live = injectStrict(LIVE_KEY)
 
-const statusText = computed(() => {
-  switch (job.status.value) {
-    case 'idle':
-      return 'No job'
-    case 'queued':
-      return 'Queued'
-    case 'processing':
-      return `Processing ${Math.round((job.progress.value ?? 0) * 100)}%`
-    case 'done':
-      return 'Ready'
-    case 'error':
-      return 'Error'
-    default:
-      return ''
-  }
-})
+const uploading = ref(false)
+const uploadError = ref<string | null>(null)
 
-const resolution = computed(() => {
-  const m = job.manifest.value
-  return m && m.width && m.height ? `${m.width}x${m.height}` : ''
-})
-
+// dropping a video sets the shared live source everyone sees; surface any failure loudly rather than swallowing it
 async function onSelect(file: File): Promise<void> {
+  uploading.value = true
+  uploadError.value = null
   try {
-    await job.submitVideo(file)
-  } catch {
-    // Surface handled in job.error; nothing further needed here.
+    await live.submitSource(file)
+  } catch (err) {
+    uploadError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    uploading.value = false
   }
 }
 </script>
@@ -48,19 +33,20 @@ async function onSelect(file: File): Promise<void> {
       </span>
       <div class="header__names">
         <h1 class="header__title">Pipeline Viewer</h1>
-        <span class="header__tag">perception stages</span>
+        <span class="header__tag">live perception</span>
       </div>
     </div>
 
     <div class="header__status">
-      <StatusDot :status="job.status.value" />
-      <span class="header__status-text">{{ statusText }}</span>
-      <span v-if="resolution" class="header__meta tabular">{{ resolution }}</span>
-      <span v-if="job.error.value" class="header__error">{{ job.error.value }}</span>
+      <span class="header__live" :class="{ 'is-on': live.connected.value }">
+        <Radio :size="15" :stroke-width="2" />
+        {{ live.connected.value ? 'LIVE' : 'connecting' }}
+      </span>
     </div>
 
     <div class="header__actions">
-      <VideoDropzone :busy="job.uploading.value" @select="onSelect" />
+      <span v-if="uploadError" class="header__error" role="alert">{{ uploadError }}</span>
+      <VideoDropzone :busy="uploading" @select="onSelect" />
     </div>
   </header>
 </template>
@@ -114,24 +100,41 @@ async function onSelect(file: File): Promise<void> {
   flex: 1 1 auto;
   min-width: 0;
 }
-.header__status-text {
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-}
-.header__meta {
+.header__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-dim);
-  padding-left: var(--space-2);
-  border-left: 1px solid var(--color-border);
+  border: 1px solid var(--color-border);
+}
+.header__live.is-on {
+  color: #ff4d4d;
+  border-color: rgba(255, 77, 77, 0.5);
+  background: rgba(255, 77, 77, 0.08);
+  animation: livepulse 1.4s ease-in-out infinite;
+}
+.header__actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 .header__error {
   font-size: var(--text-xs);
-  color: var(--color-error);
+  font-weight: 600;
+  color: #ff4d4d;
+  max-width: 32ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.header__actions {
-  flex: none;
+@keyframes livepulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 </style>

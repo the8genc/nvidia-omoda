@@ -1,4 +1,4 @@
-<!-- Concern: drag-and-drop plus click-to-pick target that emits the selected video File | Non-concern: uploading or processing it (useJob owns that) | IO: (busy) -> select(File) -->
+<!-- Concern: drag-and-drop plus click-to-pick target that emits the selected video File | Non-concern: uploading it (AppHeader owns that) | IO: (busy) -> select(File) -->
 <script setup lang="ts">
 import { onUnmounted, ref } from 'vue'
 import { Loader, UploadCloud } from 'lucide-vue-next'

@@ -1,8 +1,0 @@
-{
-  "note": "The ONLY place a vocabulary primitive maps to render geometry. Keyed by schema primitive name; the renderer never sees these keys, only the resulting class-free boxes. size is [l,h,w] in the same world units as scene positions (the depth model's fixed camera-relative scale, metric-ish, not calibrated SI meters until phase 2); color is desaturated RGB 0..1.",
-  "primitives": {
-    "generic_vehicle": { "shape": "box", "size": [4.4, 1.5, 1.9], "color": [0.42, 0.48, 0.55] },
-    "generic_avatar":  { "shape": "box", "size": [0.5, 1.7, 0.5], "color": [0.30, 0.55, 0.50] },
-    "generic_bicycle": { "shape": "box", "size": [1.6, 1.0, 0.5], "color": [0.80, 0.62, 0.30] }
-  }
-}

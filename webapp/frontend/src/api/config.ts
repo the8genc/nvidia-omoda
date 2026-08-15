@@ -1,22 +1,29 @@
-// Concern: holds the API base URL and builds process/job/frame endpoint URLs | Non-concern: making the requests (useJob owns fetching) | IO: (jobId, index, asset) -> URL strings
-export const API_BASE = 'http://100.71.143.26:8091/api'
+// Concern: derive the backend host and build the live websocket + live source URLs | Non-concern: making the requests (useLiveStream owns fetching) | IO: () -> URL strings
+// derive the backend host from the page origin so the app works on whatever DGX interface it is reached through (tailnet, LAN, localhost)
+const API_HOST = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : '100.71.143.26'
+const API_BASE = `http://${API_HOST}:8091/api`
 
-export function processUrl(): string {
-  return `${API_BASE}/process`
+// live streaming: one path per concern (need-to-know), source upload reuses API_BASE.
+// consumers subscribe only to the streams they need.
+const WS_BASE = `ws://${API_HOST}:8091/api`
+
+export function vocabularyWsUrl(): string {
+  return `${WS_BASE}/public/vocabulary-stream`
 }
 
-export function demoUrl(): string {
-  return `${API_BASE}/demo`
+export function detectionWsUrl(): string {
+  return `${WS_BASE}/local/detection-stream`
 }
 
-export function jobUrl(jobId: string): string {
-  return `${API_BASE}/jobs/${jobId}`
+export function rgbWsUrl(): string {
+  return `${WS_BASE}/local/rgb-stream`
 }
 
-export function frameUrl(jobId: string, index: number, asset: string): string {
-  return `${API_BASE}/jobs/${jobId}/frames/${index}/${asset}`
+// on-demand VLM description of the latest frame (polled by the banner)
+export function describeUrl(): string {
+  return `${API_BASE}/describe`
 }
 
-export function renderUrl(jobId: string, index: number): string {
-  return frameUrl(jobId, index, 'render.json')
+export function liveSourceUrl(): string {
+  return `${API_BASE}/live/source`
 }

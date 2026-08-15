@@ -1,31 +1,74 @@
 {
-  "schema_version": "0.3",
-  "note": "This schema IS the entire expressible vocabulary. The scene-graph and twin can emit only the classes and attributes declared here; anything absent (color, make/model, plate, face, skin tone, age, gender, clothing, gait, identity, exact position) is not a suppressed field but an unrepresentable one — the output has no token for it. Privacy is a property of the vocabulary, not of a downstream filter. The public approves and edits this document; that approval defines what the camera may ever say.",
+  "schema_version": "0.4",
+  "note": "This schema IS the entire expressible vocabulary. The scene-graph can emit only the classes and attributes declared here; anything absent (color, make/model, plate, face, skin tone, age, gender, clothing, gait, identity, exact position) is not a suppressed field but an unrepresentable one — the output has no token for it. Privacy is a property of the vocabulary, not of a downstream filter. The public approves and edits this document; that approval defines what the camera may ever say. detector_labels are the open-vocabulary prompts fed to the detector (see tools/bake_yoloe.py).",
   "camera": { "id": "demo-cam-01", "site": "intersection" },
-  "position_policy": { "mode": "grid", "cell_meters": 3.0 },
   "zones": ["roadway", "north_crosswalk", "south_crosswalk", "east_crosswalk", "west_crosswalk", "sidewalk", "median"],
   "classes": [
     {
-      "name": "vehicle",
-      "detector_labels": ["car", "truck", "bus", "motorcycle"],
+      "name": "car",
+      "detector_labels": ["car"],
       "primitive": "generic_vehicle",
       "track": "ephemeral_anonymous",
       "attributes": {
-        "zone":       { "type": "zone",                            "rationale": "coarse location only, never exact" },
-        "heading":    { "type": "degrees",                         "rationale": "direction of travel, traffic flow" },
-        "motion":     { "type": "enum", "values": ["moving", "stopped"], "rationale": "stop-compliance statistic" },
-        "headlights": { "type": "enum", "values": ["on", "off"],   "rationale": "visibility/safety condition" }
+        "zone":   { "type": "zone",                              "rationale": "coarse location only, never exact" },
+        "motion": { "type": "enum", "values": ["moving", "stopped"], "rationale": "stop-compliance statistic" }
       }
     },
     {
-      "name": "person",
-      "detector_labels": ["person"],
-      "primitive": "generic_avatar",
-      "track": "none",
-      "aggregate_when_dense": true,
+      "name": "truck",
+      "detector_labels": ["truck", "pickup truck", "van"],
+      "primitive": "generic_vehicle",
+      "track": "ephemeral_anonymous",
       "attributes": {
-        "zone":    { "type": "zone",                                              "rationale": "coarse location only, never exact" },
-        "posture": { "type": "enum", "values": ["standing", "walking", "running", "fallen"], "rationale": "safety-relevant, non-identifying" }
+        "zone":   { "type": "zone",                              "rationale": "coarse location only, never exact" },
+        "motion": { "type": "enum", "values": ["moving", "stopped"], "rationale": "stop-compliance statistic" }
+      }
+    },
+    {
+      "name": "bus",
+      "detector_labels": ["bus"],
+      "primitive": "generic_vehicle",
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone":   { "type": "zone",                              "rationale": "coarse location only, never exact" },
+        "motion": { "type": "enum", "values": ["moving", "stopped"], "rationale": "stop-compliance statistic" }
+      }
+    },
+    {
+      "name": "motorcycle",
+      "detector_labels": ["motorcycle"],
+      "primitive": "generic_vehicle",
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone":   { "type": "zone",                              "rationale": "coarse location only, never exact" },
+        "motion": { "type": "enum", "values": ["moving", "stopped"], "rationale": "stop-compliance statistic" }
+      }
+    },
+    {
+      "name": "work_vehicle",
+      "detector_labels": ["construction vehicle", "maintenance vehicle"],
+      "primitive": "generic_vehicle",
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location only, never exact" }
+      }
+    },
+    {
+      "name": "stopped_vehicle",
+      "detector_labels": ["stopped vehicle"],
+      "primitive": "generic_vehicle",
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a potential obstruction" }
+      }
+    },
+    {
+      "name": "damaged_vehicle",
+      "detector_labels": ["damaged vehicle", "overturned vehicle"],
+      "primitive": "generic_vehicle",
+      "track": "ephemeral_anonymous",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a possible incident" }
       }
     },
     {
@@ -36,6 +79,107 @@
       "attributes": {
         "zone":    { "type": "zone",    "rationale": "coarse location only, never exact" },
         "heading": { "type": "degrees", "rationale": "direction of travel" }
+      }
+    },
+    {
+      "name": "pedestrian",
+      "detector_labels": ["pedestrian"],
+      "primitive": "generic_avatar",
+      "track": "none",
+      "aggregate_when_dense": true,
+      "attributes": {
+        "zone":    { "type": "zone", "rationale": "coarse location only, never exact" },
+        "posture": { "type": "enum", "values": ["standing", "walking", "running", "fallen"], "rationale": "safety-relevant, non-identifying" }
+      }
+    },
+    {
+      "name": "road_worker",
+      "detector_labels": ["road worker", "construction worker"],
+      "primitive": "generic_avatar",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "worker presence in/near the roadway" }
+      }
+    },
+    {
+      "name": "traffic_signal",
+      "detector_labels": ["traffic signal", "pedestrian signal"],
+      "primitive": "generic_sign",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location" }
+      }
+    },
+    {
+      "name": "road_sign",
+      "detector_labels": ["road sign", "stop sign", "street sign", "speed-limit sign"],
+      "primitive": "generic_sign",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location" }
+      }
+    },
+    {
+      "name": "traffic_cone",
+      "detector_labels": ["traffic cone"],
+      "primitive": "generic_marker",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a lane change/closure" }
+      }
+    },
+    {
+      "name": "road_barrier",
+      "detector_labels": ["road barrier", "barricade", "construction fence"],
+      "primitive": "generic_barrier",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a closure" }
+      }
+    },
+    {
+      "name": "debris",
+      "detector_labels": ["debris", "fallen cargo", "vehicle part"],
+      "primitive": "generic_hazard",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a roadway hazard" }
+      }
+    },
+    {
+      "name": "pothole",
+      "detector_labels": ["pothole"],
+      "primitive": "generic_hazard",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a road-surface hazard" }
+      }
+    },
+    {
+      "name": "fallen_sign",
+      "detector_labels": ["fallen road sign", "fallen sign"],
+      "primitive": "generic_hazard",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of a hazard" }
+      }
+    },
+    {
+      "name": "smoke",
+      "detector_labels": ["smoke", "smoke plume"],
+      "primitive": "generic_hazard",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of the hazard" }
+      }
+    },
+    {
+      "name": "fire",
+      "detector_labels": ["fire", "car fire"],
+      "primitive": "generic_hazard",
+      "track": "none",
+      "attributes": {
+        "zone": { "type": "zone", "rationale": "coarse location of the hazard" }
       }
     }
   ],

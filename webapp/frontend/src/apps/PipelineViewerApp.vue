@@ -1,36 +1,24 @@
-<!-- Concern: root that creates playback+job state, provides them to the shell, and boots the demo job on mount | Non-concern: rendering panels or transport (child features own that) | IO: none -->
+<!-- Concern: root that creates the always-on live stream and provides it to the shell | Non-concern: rendering panels (child features own that) | IO: none -->
 <script setup lang="ts">
-import { onMounted, provide } from 'vue'
+import { provide, ref } from 'vue'
 import AppHeader from '@/features/pipeline/AppHeader.vue'
-import TransportBar from '@/features/pipeline/TransportBar.vue'
+import SceneBanner from '@/features/pipeline/SceneBanner.vue'
 import PanelGrid from '@/features/pipeline/PanelGrid.vue'
-import { usePlayback } from '@/composables/usePlayback'
-import { useJob } from '@/composables/useJob'
-import { JOB_KEY, PLAYBACK_KEY, type JobManifest } from '@/types/pipeline'
+import { useLiveStream } from '@/composables/useLiveStream'
+import { LIVE_KEY } from '@/types/pipeline'
 
-const playback = usePlayback()
+// live is always on: connect the websocket immediately and never toggle off
+const liveEnabled = ref(true)
+const live = useLiveStream(liveEnabled)
 
-function onManifest(manifest: JobManifest): void {
-  playback.setFrameCount(manifest.n_frames ?? 0)
-  if (manifest.fps && manifest.fps > 0) playback.setFps(manifest.fps)
-}
-
-const job = useJob(onManifest)
-
-provide(PLAYBACK_KEY, playback)
-provide(JOB_KEY, job)
-
-// boot into the pre-processed Bellevue demo; drag-and-drop still replaces it, and a missing demo falls back to the dropzone
-onMounted(async () => {
-  await job.loadDemo()
-})
+provide(LIVE_KEY, live)
 </script>
 
 <template>
   <div class="shell">
+    <SceneBanner />
     <AppHeader />
     <main class="shell__main">
-      <TransportBar />
       <PanelGrid />
     </main>
   </div>

@@ -1,72 +1,53 @@
-// Concern: defines shared domain types and the typed injection keys | Non-concern: providing or consuming those values (composables own that) | IO: none
+// Concern: defines the live stream domain types and the typed injection key | Non-concern: providing or consuming those values (composables own that) | IO: none
 import type { InjectionKey, Ref } from 'vue'
 
-export type JobStatus = 'idle' | 'queued' | 'processing' | 'done' | 'error'
+// image-space detection box, normalized to 0..1 so it overlays the rgb frame at any display size
+export interface DetectionBox {
+  label: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  conf: number
+}
 
-export interface JobManifest {
-  status: JobStatus
+// one message per concern stream — each socket carries only its concern.
+// seq is a global monotonic frame id (never resets on loop) shared across streams, so a consumer
+// can align rgb with its detections instead of showing whichever arrived last.
+export interface VocabularyMessage {
+  seq: number
+  index: number
   n_frames: number
-  fps: number
-  width: number
-  height: number
-  progress: number
+  scene: Record<string, unknown>
 }
 
-export type FrameAsset = 'rgb.jpg' | 'depth.png' | 'seg.png'
-
-export interface PointCloud {
-  count: number
-  positions: Float32Array
-  colors: Float32Array
-  labelColors: Float32Array
+export interface DetectionMessage {
+  seq: number
+  index: number
+  n_frames: number
+  boxes: DetectionBox[]
 }
 
-// A single generic drawable the engine renders verbatim, holding no class or vocabulary meaning
-export interface RenderPrimitive {
-  shape: string
-  size: [number, number, number]
-  position: [number, number, number]
-  rotation_y: number
-  color: [number, number, number]
+export interface RgbMessage {
+  seq: number
+  index: number
+  rgb: string
 }
 
-export interface RenderGround {
-  extent: [number, number, number, number]
-  y: number
+export interface LiveContext {
+  enabled: Readonly<Ref<boolean>>
+  connected: Readonly<Ref<boolean>>
+  index: Readonly<Ref<number>>
+  nFrames: Readonly<Ref<number>>
+  // scene + boxes resolved to the frame actually painted (see commitDisplayedFrame), so every view is coherent
+  displayedScene: Readonly<Ref<Record<string, unknown> | null>>
+  displayedBoxes: Readonly<Ref<DetectionBox[]>>
+  latestRgb: Readonly<Ref<RgbMessage | null>>
+  messagesPerSec: Readonly<Ref<number>>
+  commitDisplayedFrame: (seq: number) => void
+  toggle: () => void
+  setEnabled: (value: boolean) => void
+  submitSource: (file: File) => Promise<void>
 }
 
-export interface RenderFrame {
-  frame: number
-  ground: RenderGround
-  primitives: RenderPrimitive[]
-}
-
-export interface PlaybackContext {
-  currentFrame: Readonly<Ref<number>>
-  playing: Readonly<Ref<boolean>>
-  fps: Readonly<Ref<number>>
-  frameCount: Readonly<Ref<number>>
-  togglePlaying: () => void
-  setPlaying: (value: boolean) => void
-  setFrame: (index: number) => void
-  stepFrame: (delta: number) => void
-  setFps: (value: number) => void
-  setFrameCount: (value: number) => void
-}
-
-export interface JobContext {
-  jobId: Readonly<Ref<string | null>>
-  manifest: Readonly<Ref<JobManifest | null>>
-  status: Readonly<Ref<JobStatus>>
-  progress: Readonly<Ref<number>>
-  error: Readonly<Ref<string | null>>
-  uploading: Readonly<Ref<boolean>>
-  submitVideo: (file: File) => Promise<void>
-  loadDemo: () => Promise<void>
-  frameAssetUrl: (index: number, asset: FrameAsset) => string
-  cloudUrl: (index: number) => string
-  renderUrl: (index: number) => string
-}
-
-export const PLAYBACK_KEY: InjectionKey<PlaybackContext> = Symbol('playback')
-export const JOB_KEY: InjectionKey<JobContext> = Symbol('job')
+export const LIVE_KEY: InjectionKey<LiveContext> = Symbol('live')
