@@ -7,9 +7,12 @@ NVIDIA Spark Hackathon, Seattle. **Track: Do.** Runs on the shared Acer Veriton 
 **This is the combined See-to-Do monorepo.** The root is OMODA (Do track): the
 autonomy broker that judges, consents, executes, and audits. [`see/`](see/) is
 COCO (See track, from [`fredrikolis/leftover-cv-pipeline`](https://github.com/fredrikolis/leftover-cv-pipeline),
-history preserved): the perception pipeline that turns a live intersection
-camera into factual observations. COCO describes what is visible; OMODA decides
-what it means and acts under policy. The seam between them is live on the box:
+history preserved): a **privacy-preserving real-time digital twin** that turns a
+live intersection camera into factual observations, with on-box depth-privacy and
+obfuscation so faces and plates never leave the pipeline. COCO describes what is
+visible without identifying who; OMODA decides what it means and acts under policy.
+Privacy at the sensor, governance at the action: the two halves of a system that
+can watch a city without becoming surveillance. The seam between them is live on the box:
 OMODA consumes COCO's frame and observability streams at `:8091`, judges each
 observation, and republishes everything plus its own agent activity on
 `ws://…:3111/v1/out/*` for the demo dashboard
@@ -17,7 +20,7 @@ observation, and republishes everything plus its own agent activity on
 
 ---
 
-## Status, 2026-08-15
+## Status, 2026-08-16
 
 Built and deployed. Running on the box under systemd, not a laptop demo.
 
@@ -29,7 +32,9 @@ Built and deployed. Running on the box under systemd, not a laptop demo.
 | Operator channel | Telegram, real approvals recorded end to end |
 | Layer 1 seam | paired to the OpenClaw gateway, protocol 4, 171 methods |
 | All three layers | **running together against the live gateway**, `npm run demo:layers` |
-| Tests | **177 passing**, 94%+ line coverage, compliance gate green |
+| Tests | **350 passing**, compliance gate green |
+| Service layer | mock city services on `:3120` (911, roadside, utility, procurement, evidence, comms); OpenShell gates the dangerous calls, derived from the manifest |
+| Audit trail | condensed agent stream + full hash-chained record at `/ui/audit`; approvals flow escalate → approve → execute → revert |
 
 Measured, including where it fell short:
 
