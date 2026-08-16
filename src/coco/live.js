@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { screenText } from "../models/screen.js";
+import { telemetry, bound } from "../telemetry/agentic.js";
 
 export const LiveFrame = z.object({
   seq: z.number(),
@@ -116,12 +117,15 @@ export function createCocoLive({
    */
   async function describe(prompt) {
     const url = `${base}/api/describe?prompt=${encodeURIComponent(prompt)}`;
+    const correlationId = `describe-${++obsSeq}`;
+    telemetry.toolCall({ correlationId, actor: "perception", target: "coco.describe", detail: { prompt: bound(prompt, 200) } });
     try {
       const res = await fetchImpl(url, { signal: AbortSignal.timeout(30_000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json();
       const { clean } = screenText(body.description ?? "", { maxLen: 600 });
       record({ tool: "coco.describe", outcome: "answered", reason: prompt.slice(0, 120) });
+      telemetry.toolResult({ correlationId, actor: "perception", target: "coco.describe", detail: { ok: true, description: bound(clean, 300) } });
       return { description: clean };
     } catch (err) {
       record({ tool: "coco.describe", outcome: "failed", reason: err.message.slice(0, 120) });

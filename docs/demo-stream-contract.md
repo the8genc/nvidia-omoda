@@ -16,6 +16,7 @@ drive it. The token prints once at boot (`viewer ...`); ask and we hand it over.
 | `/v1/out/frames` | video frame | `{topic:"frame", at, seq, index, rgb}` where `rgb` is the JPEG data URI relayed verbatim from COCO |
 | `/v1/out/observations` | COCO description | `{topic:"observation", at, source, description, prompt, followup, danger_signal, verdict, intentId?, incidentType?, severity?, signals?}` |
 | `/v1/out/agents` | ledgered action | `{topic:"agent", at, entry}` where `entry` is the full hash-chained ledger record: seq, agent, tool, verb, tier, outcome, authority, intentId, hash |
+| `/v1/out/agentic` | agentic event | `{topic:"agentic", at, event, correlationId, actor, target?, intentId?, detail}` — the fine-grained narration stream, catalog below |
 
 ## What the observation verdicts mean
 
@@ -33,6 +34,28 @@ Every action the platform records, as it lands: `judge.incident`,
 `telegram.decide`, `ui.agent.deploy`, gateway calls, `coco.describe` questions.
 The demo app renders this as the live "what are the agents doing" panel; the
 `tier` field (safe, contained, consequential, prohibited) is the color coding.
+
+## The agentic narration stream (`/v1/out/agentic`)
+
+Where `/v1/out/agents` is the audit (durable, terse), this stream is the story:
+what the agents are deciding, saying to each other, and touching, as it happens.
+The `event` field is a fixed catalog; new instrumentation only ADDS events, the
+envelope never changes shape, so the dashboard can build against this today:
+
+| `event` | Meaning | `detail` carries |
+|---|---|---|
+| `orchestration.route` | L0 decided who or what handles a request | `decision` (`tool-selected` / `no-tool`), `reason`, `model` |
+| `agent.message` | one agent handing work to another | `handoff`, e.g. the judge handing an incident intent to L0, with `incidentType`, `severity`, `signals` |
+| `tool.call` / `tool.result` | a declared tool invoked and what it returned | tool-specific, e.g. `coco.describe` prompt and bounded answer |
+| `api.call` / `api.result` | an outbound API request and its response | `url`/`params`, then `latencyMs`, `ok`, bounded `body` |
+| `inference.call` / `inference.result` | a model request and its outcome | `endpoint`, `purpose`, bounded `prompt`; then `latencyMs`, `usage`, bounded `output` |
+
+`correlationId` pairs each call with its result. Every `detail` value is
+size-bounded (~600 chars) with bearer tokens, auth headers, and base64 media
+stripped before it leaves the process. Instrumented today: the inference client,
+the L0 planner, the OpenClaw gateway client (L3), the `coco.describe` tool, and
+the judge's incident handoffs; the ledger hook means anything not yet narrated
+here still appears on `/v1/out/agents`.
 
 ## Backpressure
 

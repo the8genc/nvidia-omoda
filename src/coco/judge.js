@@ -21,6 +21,7 @@ import { route, TASK } from "../models/router.js";
 import { createInferenceClient, extractJson } from "../models/client.js";
 import { screenText } from "../models/screen.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
+import { telemetry } from "../telemetry/agentic.js";
 
 export const INCIDENT_TYPES = ["traffic-accident", "fallen-signage", "road-maintenance", "other"];
 
@@ -245,6 +246,11 @@ export function createObservationJudge({
     });
     open.set(key, { intentId: intent.id, occurrences: 1, quietStreak: 0 });
     stats.incidents += 1;
+    telemetry.message({
+      actor: "judge", target: "l0",
+      intentId: intent.id,
+      detail: { handoff: "incident-intent", incidentType: j.incident_type, severity: j.severity, signals },
+    });
     record({ tool: "judge.incident", verb: "create", outcome: "intent-opened", reason: `${j.incident_type} ${j.severity}`, intentId: intent.id });
     return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals };
   }
