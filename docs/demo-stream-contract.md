@@ -17,7 +17,7 @@ case the outputs are ever locked again (`outputs.open` in boot).
 |---|---|---|
 | `/v1/out/frames` | video frame | `{topic:"frame", at, seq, index, rgb}` where `rgb` is the JPEG data URI relayed verbatim from COCO |
 | `/v1/out/observations` | COCO description | `{topic:"observation", at, source, description, prompt, followup, danger_signal, verdict, intentId?, incidentType?, severity?, signals?}` |
-| `/v1/out/agents` | agent action | `{topic:"agent", at, agent, action, seq}` — a thin ticker: agent name and the action it is taking (see below) |
+| `/v1/out/agents` | agent action | `{topic:"agent", at, agentRoutedTo, incident, action, trigger, intentId}` — one event per trigger-driven routing (see below) |
 | `/v1/out/agentic` | agentic event | `{topic:"agentic", at, event, correlationId, actor, target?, intentId?, detail}` — the fine-grained narration stream, catalog below |
 | `/v1/out/audit` | audit record | the agentic audit trail, eight fields per engagement; see `docs/audit-stream.md` |
 
@@ -32,28 +32,33 @@ case the outputs are ever locked again (`outputs.open` in boot).
 
 ## The agent-action stream (`/v1/out/agents`)
 
-A thin activity ticker: two fields per event, the **agent name** and the
-**action** it is taking, plus `seq` for ordering. It is a glanceable "what are the
-agents doing right now" feed. Every hop down the org chart is one event: OMODA
-(L0) taking an incident, a domain expert (L1) delegating to a worker (L2), a
-worker escalating to the tool specialist (L3), and each ledgered action.
+One event per **trigger-driven routing**: when OMODA (L0) matches a take-action
+trigger and routes an incident to an L1 agent, it emits exactly what the trigger
+drove. Three fields carry the meaning, mapped straight from the take-action
+triggers list (`src/transport/triggers.js`):
+
+- **`agentRoutedTo`** — the L1 agent OMODA handed the incident to (e.g. `accident-agent`, `fire-agent`, `roadside`, `utility-agent`, `comms-agent`).
+- **`incident`** — the incident type (e.g. `traffic-accident`, `fire`, `utility-hazard`).
+- **`action`** — the action text from the trigger rule that fired (e.g. "coordinate the accident response (EMS, police)").
+
+Plus `trigger` (the phrase that matched, or `null` when the model detected the
+incident without a literal phrase) and `intentId` (groups it with the same
+incident on the audit trail).
 
 ```
-{ topic:"agent", at, agent:"OMODA",              action:"traffic-accident -> accident-agent",           seq:3 }
-{ topic:"agent", at, agent:"ambulatory",         action:"request an ambulance (awaiting approval)",     seq:null }
-{ topic:"agent", at, agent:"emergency dispatch", action:"ran dispatch.unit.request",                     seq:8 }
-{ topic:"agent", at, agent:"procurement",        action:"authorize the crane callout (public spend) (awaiting approval)", seq:null }
+{ topic:"agent", at, agentRoutedTo:"accident-agent", incident:"traffic-accident",
+  action:"coordinate the accident response (EMS, police)", trigger:"collision", intentId:"int_…" }
+{ topic:"agent", at, agentRoutedTo:"fire-agent", incident:"fire",
+  action:"coordinate the fire response (fire department, EMS)", trigger:"smoke", intentId:"int_…" }
+{ topic:"agent", at, agentRoutedTo:"utility-agent", incident:"utility-hazard",
+  action:"coordinate the infrastructure-hazard response (de-energize, gas shutoff)", trigger:"downed power line", intentId:"int_…" }
 ```
 
-`agent` is the plain name (L0 is **OMODA**, the human is **the operator**). A
-dangerous hop reads `… (awaiting approval)`. `seq`, when present, cross-references
-the full record on `/v1/ledger` and `/ui/audit`.
-
-**Everything else moved to the audit trail.** Authority (who approved), intent
-(why), tier (L0-L3), the concrete target call, and the hash chain are no longer on
-this stream; they are on `/v1/out/audit` (condensed, eight fields) and `/ui/audit`
-(the full hash-chained record, admin only). See `docs/audit-stream.md`. This
-stream is the ticker; the audit trail is the record.
+One event per NEW incident (not every frame of an ongoing one), and nothing for a
+quiet frame. The full agent-to-agent choreography, the governed tool calls, who
+approved, and the hash chain are on `/v1/out/audit` (condensed) and `/ui/audit`
+(the full record). This stream answers "which agent is on what, and why"; the
+audit trail is the record.
 
 ## The agentic narration stream (`/v1/out/agentic`)
 

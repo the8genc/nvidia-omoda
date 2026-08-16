@@ -30,7 +30,6 @@ import { createCocoLive } from "./coco/live.js";
 import { createBus } from "./bus.js";
 import { createAgenticTelemetry, setGlobalTelemetry } from "./telemetry/agentic.js";
 import { skillLevelMap } from "./telemetry/display.js";
-import { narrateEntry } from "./telemetry/narrate.js";
 import { isAuditWorthy, ledgerToAudit } from "./telemetry/audit.js";
 import { readFileSync, existsSync } from "node:fs";
 
@@ -106,14 +105,11 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const levelMap = skillLevelMap(skills);
   const ledger = createLedger({
     path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl",
-    // The agent-action stream is a compact projection for the dashboard: name,
-    // level, action, instruction (plus seq/tier for ordering and colour). The
-    // full hash-chained record stays on disk and on /v1/ledger, one seq lookup
-    // away. The audit stream is the eight-field projection of the same record,
-    // filtered to the triggered response chain (quiet frame review is never here
-    // because it is never ledgered).
+    // The agent-action stream (/v1/out/agents) now carries trigger-driven routing
+    // events (agent routed to, incident, action), published by the orchestrator.
+    // The ledger feeds the AUDIT stream, the eight-field projection filtered to the
+    // triggered response chain; the full hash-chained record is on /ui/audit.
     onAppend: (rec) => {
-      bus.publish("agent", narrateEntry(rec, levelMap));
       if (isAuditWorthy(rec)) bus.publish("audit", ledgerToAudit(rec, levelMap));
     },
   });

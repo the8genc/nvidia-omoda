@@ -289,7 +289,13 @@ export function createObservationJudge({
       detail: { handoff: "incident-intent", incidentType: j.incident_type, severity: j.severity, signals },
     });
     record({ tool: "judge.incident", verb: "create", outcome: "intent-opened", reason: `${j.incident_type} ${j.severity}`, intentId: intent.id });
-    return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals, trigger: hit ? hit.matchedPhrase : null };
+    // The action text from the take-action trigger that fired (or the trigger
+    // rule for this incident type when the model detected it without a phrase),
+    // so the agent-action stream can show what the trigger told the agent to do.
+    const triggerAction = hit?.rule?.action
+      ?? triggers?.list?.().find((r) => r.incidentType === j.incident_type)?.action
+      ?? null;
+    return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals, trigger: hit ? hit.matchedPhrase : null, triggerAction };
   }
 
   return {

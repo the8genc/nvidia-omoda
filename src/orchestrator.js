@@ -15,7 +15,7 @@ import { planAction, PlanRefused } from "./models/plan.js";
 import { consentKind } from "./domain/taxonomy.js";
 import { telemetry } from "./telemetry/agentic.js";
 import { candidateSignals } from "./coco/judge.js";
-import { narrateResponse, handoffActivity } from "./telemetry/narrate.js";
+import { narrateResponse } from "./telemetry/narrate.js";
 import { handoffToAudit } from "./telemetry/audit.js";
 
 // L0's routing table: which L1 domain agent owns which incident type. This is
@@ -166,13 +166,20 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
       // phrase (when a trigger fired) so the audit trail carries the trigger word.
       record({ tool: "l0.review", outcome: "routed-to-l1", reason: `${verdict.incidentType ?? "?"} -> ${l1}`, intentId: verdict.intentId, triggerPhrase: verdict.trigger ?? null });
       telemetry.route({ actor: "l0", target: l1, intentId: verdict.intentId, detail: { decision: "route-to-l1", incidentType: verdict.incidentType, signals, inferenceUsed: true } });
-      // Narrate the whole response flow down the org chart, but only when a NEW
-      // incident opens (not on every subsequent frame of the same incident). The
-      // same handoffs feed the audit stream as agent-to-agent engagement events.
+      // The agent-action stream (/v1/out/agents) maps to the take-action trigger
+      // that drove this: which agent was routed to, the incident, and the action
+      // from the trigger list. One event per NEW incident (not every frame).
       if (verdict.verdict === "incident" && bus) {
+        bus.publish("agent", {
+          agentRoutedTo: l1,
+          incident: verdict.incidentType ?? null,
+          action: verdict.triggerAction ?? null,
+          trigger: verdict.trigger ?? null,
+          intentId: verdict.intentId ?? null,
+        });
+        // The full agent-to-agent choreography still goes to the audit trail.
         for (const ev of narrateResponse({ incidentType: verdict.incidentType, l1, intentId: verdict.intentId }, levelMap)) {
-          bus.publish("agent", handoffActivity(ev));   // thin ticker: name + action
-          bus.publish("audit", handoffToAudit(ev, levelMap)); // full engagement to the audit trail
+          bus.publish("audit", handoffToAudit(ev, levelMap));
         }
       }
       return { ...verdict, reviewed: true, routedToL1: l1, signals, inferenceUsed: true };
