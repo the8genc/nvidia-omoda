@@ -60,8 +60,23 @@ const json = (res, status, obj) => {
 export function createCityServices({ now = () => Date.now(), registry = null } = {}) {
   const calls = new Map();      // call_id -> { service, location, incident, unit, eta, placed_at }
   const workorders = new Map(); // wo_id   -> { type, segment, crew_eta, placed_at }
+  const incidents = new Map();  // inc_id  -> { kind, location, summary, placed_at, retracted }
+  const notices = new Map();    // ntf_id  -> { to, subject, placed_at }
   let counter = 0;
   const nextId = (prefix) => `${prefix}-${(++counter).toString().padStart(4, "0")}`;
+
+  // The write calls that put something in the real world are dangerous. The
+  // source of truth is the manifest: a tool is dangerous iff its consent is not
+  // "none". A static set is the fallback for a mock stood up without a registry,
+  // so the flag never silently becomes false.
+  const DANGEROUS_FALLBACK = new Set([
+    "dispatch.unit.request", "dispatch.callout.cancel",
+    "incident.record.create", "incident.record.retract", "supervisor.notify",
+  ]);
+  function isDangerous(tool) {
+    if (!registry) return DANGEROUS_FALLBACK.has(tool);
+    return protectionFor(tool).openshell_protected ?? DANGEROUS_FALLBACK.has(tool);
+  }
 
   // Route -> backing tool, so the catalog can report OpenShell protection from
   // the manifest. protected = the tool needs a recorded decision (consent).
@@ -74,6 +89,10 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
     { method: "POST", path: "/api/roads/workorders", tool: "roadside.workorder.create", summary: "open a roadside/DOT work order (tow, debris, pothole)" },
     { method: "GET", path: "/api/roads/workorders/{id}", tool: "roadside.workorder.create", summary: "poll a work order: status and crew ETA" },
     { method: "DELETE", path: "/api/roads/workorders/{id}", tool: "roadside.workorder.cancel", summary: "cancel a work order" },
+    { method: "POST", path: "/api/incidents", tool: "incident.record.create", summary: "file an incident record with the county of record" },
+    { method: "GET", path: "/api/incidents/{id}", tool: "incident.status.read", summary: "poll a filed incident record" },
+    { method: "DELETE", path: "/api/incidents/{id}", tool: "incident.record.retract", summary: "retract a filed incident record" },
+    { method: "POST", path: "/api/notify", tool: "supervisor.notify", summary: "notify a supervisor / on-call under our name" },
   ];
 
   function protectionFor(tool) {
@@ -122,6 +141,15 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
     };
   }
 
+  function incidentView(id, rec) {
+    const elapsed = Math.max(0, Math.floor((now() - rec.placed_at) / 1000));
+    const status = rec.retracted ? "retracted" : elapsed < 30 ? "filed" : "acknowledged";
+    return {
+      incident_id: id, kind: rec.kind, location: rec.location, summary: rec.summary,
+      status, routed_to: "King County incident registry", filed_at: new Date(rec.placed_at).toISOString(),
+    };
+  }
+
   async function readBody(req) {
     const chunks = [];
     for await (const c of req) chunks.push(c);
@@ -162,7 +190,7 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
         placed_at: now(),
       };
       calls.set(id, rec);
-      return json(res, 201, { ...dispatchView(id, rec), dangerous: true, message: `${service.toUpperCase()} unit ${rec.unit.unit_id} dispatched` });
+      return json(res, 201, { ...dispatchView(id, rec), dangerous: isDangerous("dispatch.unit.request"), message: `${service.toUpperCase()} unit ${rec.unit.unit_id} dispatched` });
     }
     const cadMatch = p.match(/^\/api\/dispatch\/([A-Za-z0-9-]+)$/);
     if (cadMatch) {
@@ -170,7 +198,7 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
       const rec = calls.get(id);
       if (!rec) return json(res, 404, { error: "unknown call_id" });
       if (m === "GET") return json(res, 200, dispatchView(id, rec));
-      if (m === "DELETE") { rec.cancelled = true; return json(res, 200, { ...dispatchView(id, rec), dangerous: true, message: "callout cancelled" }); }
+      if (m === "DELETE") { rec.cancelled = true; return json(res, 200, { ...dispatchView(id, rec), dangerous: isDangerous("dispatch.callout.cancel"), message: "callout cancelled" }); }
     }
 
     // ── roadside / Seattle DOT ───────────────────────────────────────────
@@ -184,7 +212,7 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
       const id = nextId("WO");
       const rec = { type, segment: body.segment ?? "unknown", unit: unitFor("tow", id), crew_eta: ETA[type] ?? 900, placed_at: now() };
       workorders.set(id, rec);
-      return json(res, 201, { ...workorderView(id, rec), dangerous: false, message: `work order ${id} opened` });
+      return json(res, 201, { ...workorderView(id, rec), dangerous: isDangerous("roadside.workorder.create"), message: `work order ${id} opened` });
     }
     const woMatch = p.match(/^\/api\/roads\/workorders\/([A-Za-z0-9-]+)$/);
     if (woMatch) {
@@ -192,11 +220,41 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
       const rec = workorders.get(id);
       if (!rec) return json(res, 404, { error: "unknown work_order_id" });
       if (m === "GET") return json(res, 200, workorderView(id, rec));
-      if (m === "DELETE") { rec.cancelled = true; return json(res, 200, { ...workorderView(id, rec), message: "work order cancelled" }); }
+      if (m === "DELETE") { rec.cancelled = true; return json(res, 200, { ...workorderView(id, rec), dangerous: isDangerous("roadside.workorder.cancel"), message: "work order cancelled" }); }
+    }
+
+    // ── incident records (the See-track responder files these) ───────────
+    // A record filed with a county under our name is a consequential write:
+    // OpenShell holds the POST until a human approves, and the DELETE (retract)
+    // takes two people. This is the same taxonomy applied to a middle service
+    // tier, not a bespoke rule for emergencies.
+    if (p === "/api/incidents" && m === "POST") {
+      const body = await readBody(req);
+      const id = nextId("INC");
+      const rec = { kind: body.kind ?? "detection", location: body.location ?? "unknown", summary: body.summary ?? "unspecified", placed_at: now() };
+      incidents.set(id, rec);
+      return json(res, 201, { ...incidentView(id, rec), dangerous: isDangerous("incident.record.create"), message: `incident ${id} filed` });
+    }
+    const incMatch = p.match(/^\/api\/incidents\/([A-Za-z0-9-]+)$/);
+    if (incMatch) {
+      const id = incMatch[1];
+      const rec = incidents.get(id);
+      if (!rec) return json(res, 404, { error: "unknown incident_id" });
+      if (m === "GET") return json(res, 200, incidentView(id, rec));
+      if (m === "DELETE") { rec.retracted = true; return json(res, 200, { ...incidentView(id, rec), dangerous: isDangerous("incident.record.retract"), message: "incident record retracted" }); }
+    }
+
+    // ── supervisor / on-call notification ────────────────────────────────
+    if (p === "/api/notify" && m === "POST") {
+      const body = await readBody(req);
+      const id = nextId("NTF");
+      const rec = { to: body.to ?? "on-call supervisor", subject: body.subject ?? "incident notification", placed_at: now() };
+      notices.set(id, rec);
+      return json(res, 201, { notice_id: id, to: rec.to, subject: rec.subject, status: "delivered", dangerous: isDangerous("supervisor.notify"), sent_at: new Date(rec.placed_at).toISOString(), message: `notification ${id} sent to ${rec.to}` });
     }
 
     return json(res, 404, { error: "no such route", hint: "GET /api/catalog lists every route" });
   }
 
-  return { handle, server: createServer(handle), _state: { calls, workorders } };
+  return { handle, server: createServer(handle), _state: { calls, workorders, incidents, notices } };
 }

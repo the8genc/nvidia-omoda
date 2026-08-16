@@ -83,6 +83,52 @@ test("a roadside work order is pollable and not dangerous", async () => {
   assert.equal((await call(svc, "GET", `/api/roads/workorders/${wo.work_order_id}`)).body.status, "crew_dispatched");
 });
 
+test("every catalogued route resolves to a declared tool: nothing points off the service layer", async () => {
+  const svc = createCityServices({ registry });
+  const { body } = await call(svc, "GET", "/api/catalog");
+  for (const r of body.routes) {
+    assert.ok(registry.isDeclared(r.tool), `${r.method} ${r.path} -> ${r.tool} must be a declared tool`);
+    // protection is derived from the manifest, never null/unknown
+    assert.equal(typeof r.openshell_protected, "boolean", `${r.tool} must have a known protection state`);
+  }
+});
+
+test("the incident-response routes are catalogued and protected per the manifest", async () => {
+  const svc = createCityServices({ registry });
+  const { body } = await call(svc, "GET", "/api/catalog");
+  const byPath = Object.fromEntries(body.routes.map((r) => [`${r.method} ${r.path}`, r]));
+  assert.equal(byPath["POST /api/incidents"].consent, "approval");
+  assert.equal(byPath["POST /api/incidents"].openshell_protected, true);
+  assert.equal(byPath["DELETE /api/incidents/{id}"].consent, "two-person");
+  assert.equal(byPath["POST /api/notify"].consent, "review");
+  assert.equal(byPath["POST /api/notify"].openshell_protected, true);
+  // polling a filed record is a read, so it is open
+  assert.equal(byPath["GET /api/incidents/{id}"].openshell_protected, false);
+});
+
+test("filing an incident is dangerous, pollable, and retractable", async () => {
+  let t = 0;
+  const svc = createCityServices({ registry, now: () => t });
+  const inc = (await call(svc, "POST", "/api/incidents", { kind: "collision", location: "5th & Pine", summary: "two-car" })).body;
+  assert.equal(inc.dangerous, true, "a filed record under our name is a governed write");
+  assert.equal(inc.status, "filed");
+  assert.ok(inc.incident_id.startsWith("INC-"));
+  t = 60_000;
+  assert.equal((await call(svc, "GET", `/api/incidents/${inc.incident_id}`)).body.status, "acknowledged");
+  const ret = (await call(svc, "DELETE", `/api/incidents/${inc.incident_id}`)).body;
+  assert.equal(ret.status, "retracted");
+  assert.equal(ret.dangerous, true);
+});
+
+test("notifying a supervisor is a governed write and delivers", async () => {
+  const svc = createCityServices({ registry, now: () => 0 });
+  const { status, body } = await call(svc, "POST", "/api/notify", { to: "shift supervisor", subject: "incident filed" });
+  assert.equal(status, 201);
+  assert.equal(body.dangerous, true);
+  assert.equal(body.status, "delivered");
+  assert.ok(body.notice_id.startsWith("NTF-"));
+});
+
 test("unknown routes 404 with a hint", async () => {
   const svc = createCityServices({ registry });
   const { status, body } = await call(svc, "GET", "/api/nope");

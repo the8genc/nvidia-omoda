@@ -21,6 +21,19 @@ JSON back, poll live status, without placing a single real emergency call.
 | POST | `/api/roads/workorders` | roadside.workorder.create | no (reversible) |
 | GET | `/api/roads/workorders/{id}` | roadside.workorder.create | no |
 | DELETE | `/api/roads/workorders/{id}` | roadside.workorder.cancel | no |
+| POST | `/api/incidents` | incident.record.create | **yes** (approval) |
+| GET | `/api/incidents/{id}` | incident.status.read | no (read) |
+| DELETE | `/api/incidents/{id}` | incident.record.retract | **yes** (two-person) |
+| POST | `/api/notify` | supervisor.notify | **yes** (review) |
+
+Every route above resolves to a tool declared in a skills manifest, and every
+agent's egress points here. There are no calls to external endpoints in any
+manifest except the two genuinely separate platforms on this box: COCO perception
+(`:8091`) and the OpenClaw gateway (`:18789`). Everything an agent does to the
+outside world goes through this one service layer, which is the tier OpenShell
+governs and, in production, the tier that would route each call to its real
+backend. Applying the taxonomy here is the point: OpenShell protects calls to
+external resources at a middle layer of the stack, not only at the tool edge.
 
 `GET /api/catalog` returns this table live, and the `openshell_protected` flag is
 read from the actual skills manifest, so what the mock calls dangerous is exactly
