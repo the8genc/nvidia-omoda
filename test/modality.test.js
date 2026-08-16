@@ -84,12 +84,20 @@ test("a reasoning block in the model output never reaches the transcript", async
   assert.equal(t.transcript, "send the crew");
 });
 
-test("video is labeled and staged, honestly", async () => {
-  const { transform } = harness();
-  const err = await transform.transform({ modality: "video", fileId: "f3" }).then(() => null, (e) => e);
-  assert.ok(err instanceof TransformRefused);
-  assert.equal(err.modality, "video");
-  assert.match(err.message, /staged/);
+test("video goes through the same local path: download, describe, screen", async () => {
+  const { transform, calls } = harness({ transcriptText: "A test pattern with color bars. No speech occurs." });
+  const t = await transform.transform({ modality: "video", fileId: "f3", mimeType: "video/mp4" });
+  assert.equal(t.modality, "video");
+  assert.equal(t.egress, "local");
+  assert.match(t.transcript, /color bars/);
+  const part = calls.inference[0].messages[0].content.find((c) => c.type === "video_url");
+  assert.match(part.video_url.url, /^data:video\/mp4;base64,/);
+});
+
+test("a video with the local model down is refused off-box, same as voice", async () => {
+  const { transform, calls } = harness({ localAvailable: () => false });
+  await assert.rejects(() => transform.describeVideo({ fileId: "f3" }), /refusing to send media off-box/);
+  assert.equal(calls.fetch.length, 0);
 });
 
 test("an empty transcript is a refusal, not an empty intent", async () => {
