@@ -51,7 +51,13 @@ run_smoke() {
 
   # 2. health, UI, stream upgrade
   c=$(code "http://$HOST:$PORT/healthz");        [ "$c" = 200 ] && pass "GET /healthz 200" || fail "GET /healthz $c"
-  c=$(code "http://$HOST:$PORT/ui");             [ "$c" = 200 ] && pass "GET /ui 200"      || fail "GET /ui $c"
+  # The portal can write (agent deploys), so it must be LOCKED anonymously and
+  # open with the admin credential (default, or OMODA_ADMIN_* from .env).
+  c=$(code "http://$HOST:$PORT/ui");             [ "$c" = 401 ] && pass "GET /ui anonymous -> 401 (locked)" || fail "GET /ui anonymous -> $c (want 401)"
+  AUSER="${OMODA_ADMIN_USER:-$(grep -s '^OMODA_ADMIN_USER=' .env | cut -d= -f2-)}"; AUSER="${AUSER:-omoda-admin}"
+  APASS="${OMODA_ADMIN_PASS:-$(grep -s '^OMODA_ADMIN_PASS=' .env | cut -d= -f2-)}"; APASS="${APASS:-SparkDo-OMODA-2026}"
+  c=$(code -u "$AUSER:$APASS" "http://$HOST:$PORT/ui"); [ "$c" = 200 ] && pass "GET /ui with admin credential -> 200" || fail "GET /ui authenticated -> $c"
+  c=$(code -u "$AUSER:$APASS" "http://$HOST:$PORT/ui/agents/new"); [ "$c" = 200 ] && pass "GET /ui/agents/new 200 (deploy flow up)" || fail "GET /ui/agents/new -> $c"
   c=$(code "http://$HOST:$STREAM_PORT/");        [ "$c" = 426 ] && pass "stream 426 (upgrade required)" || fail "stream $c (want 426)"
 
   # 3. auth is enforced: a privileged read with no token must be refused, not served
