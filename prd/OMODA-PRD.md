@@ -3,8 +3,8 @@
 **Agent Capability PRD**
 
 **Author:** Arif Gursel (ag@getonpace.org) · 8genC
-**Date:** 2026-08-15 · **Revised:** 2026-08-15 (v3, built and measured)
-**Status:** **Built and deployed.** 161 tests, running on the box, gateway paired
+**Date:** 2026-08-15 · **Revised:** 2026-08-15 (v4, interface contract and agent organization, §23)
+**Status:** **Built and deployed** (177 tests, running on the box, gateway paired); v4 scope in build
 **Slug:** `omoda`
 **Repo:** [the8genc/nvidia-omoda](https://github.com/the8genc/nvidia-omoda)
 **Sibling project (shares the box):** [the8genc/leftovers](https://github.com/the8genc/leftovers)
@@ -822,3 +822,131 @@ Build window Fri evening 2026-08-14 to Sun 11:00 2026-08-16. Sunday 11:00 is a f
 6. **Delta TTL.** How long should an approval-scoped write window stay open? Long enough for a retry with backoff, short enough that a crashed Broker cannot leave it open. Starting point 120 s, revisit after P2.
 7. **Two-person rule scope.** Currently proposed for deletes with financial or legal impact. Is that too narrow, or too slow for a weekend demo with one operator?
 8. **Team composition.** The rules require teams of 3 or more. Roster and role split (Compiler / Broker+consent / demo+benchmark) confirmed Friday.
+
+---
+
+## 23. v4: The interface contract and the agent organization
+
+Source: "OMODA Interface and Agentic Organization" (Arif, whiteboards, 2026-08-15).
+This section is the requirements as specified, mapped onto what already runs.
+Two vocabularies collide and are disambiguated here once: **Layers** are the
+platform strata (1 orchestration, 2 policy, 3 protections, per §9.6). **Levels**
+are agent ranks in the organization (L0 through L3, per the org chart). An L3
+agent is governed by Layer 3; the similarity of names is coincidence.
+
+### 23.1 Three ways in, one transport layer
+
+The platform is engaged three ways, and all three land in a single transport
+layer before anything else sees the data:
+
+| # | Interface | Contract |
+|---|---|---|
+| 1 | **WebSocket** (primary) | JSON stream. OMODA **exposes** a socket to receive (`ws://…:3111/v1/stream`, running today), and can also be **pointed at** a stream that is already pushing JSON (outbound client mode, new) |
+| 2 | **API** | `POST` for new engagements that must be acted on (running today as `POST /v1/intents`); `PUT` for updates to things previously posted (new: `PUT /v1/intents/{id}`) |
+| 3 | **Telegram, multimodal** | text, voice, or video; a transform layer detects the modality and normalizes it before the platform sees it (text runs today; voice and video transform are new) |
+
+The transport layer's job is direction and shape: it determines which way data
+is flowing, transforms it to one canonical envelope, and hands that envelope on.
+Nothing downstream knows or cares which of the three doors the data came through.
+
+```
+{ source, direction, modality, payload, received_at, idempotency_key }
+```
+
+**The modality transform runs on the box.** Telegram voice arrives as Opus audio
+and video as MP4; both go to the local Nemotron Omni, which is multimodal and
+already serves with `vllm[audio]` enabled. Media is downloaded to the box and
+transcribed or described there, with zero egress; the same perception-without-
+egress argument from §7 applies to an operator's voice note as to a camera frame.
+This also strengthens G7 honestly: the one model now demonstrably carries text
+planning, audio transcription, and vision in the live path.
+
+**A note on the outbound WebSocket.** The See contract (§4a of the build plan)
+rejected outbound WS from the *sandbox*, because sandbox egress must be
+L7-inspectable and a raw socket is not. That reasoning stands. Outbound client
+mode lives in the **platform service on the host**, which is where the inbound
+listener already lives; the sandbox's egress policy is untouched.
+
+### 23.2 The proxy layer: audit and retrieval
+
+Every transformed request passes through a proxy layer before L0:
+
+1. **Audit.** The request is recorded on the hash-chained ledger. This exists.
+2. **Retrieval.** A knowledge store returns context pertinent to the request, to
+   tighten L1 inference and keep routine decisions deterministic. An **admin
+   portal** page in the SSR UI accepts document uploads into that store.
+
+Stated plainly: the shared vLLM exposes no embeddings endpoint, so v1 retrieval
+is **lexical** (term scoring over uploaded documents), not vector similarity.
+The interface is written so a vector backend drops in when an embedding endpoint
+exists, and the UI says "retrieval", never claiming semantics it does not have.
+
+### 23.3 The organization: L0 through L3
+
+The org chart, and what each level may and may not do. The enforcement is
+structural: an agent's level determines what is **injected** into it at load
+time, so a level cannot exceed its authority by asking nicely.
+
+| Level | Role | Inference | Tools | Gets injected |
+|---|---|---|---|---|
+| **L0** | Orchestrator. Receives every transformed request, decides who handles it | Yes: reasoning over the full capability registry | None | Inference client, registry (read), intent store |
+| **L1** | Domain experts. Own a domain, break work up, direct their L2s; do not do the work | Yes: hyper-contextual to their domain, fed by retrieval | None | Inference client scoped to domain, retrieval, their L2 roster |
+| **L2** | Workers. Execute direction from L1. **No inference calls**; uncertainty goes back up to their L1, never to a model | **No** | Non-dangerous only: reads and no-impact writes | Tool executor filtered to `consent: none` capabilities |
+| **L3** | Tool specialists. **No task context**: they receive a tool-specific request, execute it, return the response upstream | **No** | The dangerous ones, governed by OpenShell | One tool client and nothing else; requests arrive as `{tool, args}` with no intent, no history, no why |
+
+Two properties fall out of the structure rather than the prompting:
+
+- **An L2 cannot be talked into a model call**: it has no inference client to
+  call. An L3 cannot leak task context into a tool call: it was never given any.
+- **The L2 to L3 handoff is the Broker.** When an L2's work would be potentially
+  destructive, it does not do the work; it emits an action, and the Broker
+  classifies it on the two axes of §8. Contained work executes at L3 under the
+  OpenShell envelope with no human in the loop, which is what "removes human
+  gating" means here: the gate moved from the action to the envelope, exactly the
+  §1 thesis. An action that would cross the envelope still materializes its
+  capability only through a recorded decision. The org chart does not weaken
+  consent; it names who stands where when consent fires.
+
+### 23.4 Skills carry the level
+
+Every agent, at every level, is defined by **one Markdown file**:
+`omoda.skill.md`, YAML front matter for the machine, prose body for the agent.
+The front matter is today's manifest schema plus one field:
+
+```markdown
+---
+skill: invoice-dispatch
+agent: finance
+level: 2
+capabilities:
+  - tool: quickbooks.invoice.read
+    verb: read
+    impact: []
+    ...
+---
+Instructions the agent itself reads live here, as prose.
+```
+
+The level is the only thing that changes how an agent engages. The compiler
+enforces the level contract at load time and **refuses to boot** a manifest that
+violates it: a `level: 2` skill declaring an inference grant, or a `level: 3`
+skill declaring more than tool connectivity, fails compilation the same way a
+malformed manifest does today. Undeclared is denied; now, so is over-leveled.
+Existing `omoda.skill.yaml` files keep working during migration; the YAML is the
+same front matter without the prose.
+
+### 23.5 What this changes in the codebase
+
+| Requirement | Exists today | Work |
+|---|---|---|
+| WS inbound | `src/api/stream.js` | none |
+| WS outbound client mode | no | new: connect to a configured pushing stream, same dedupe/debounce path |
+| `POST` new engagement | `POST /v1/intents` | none |
+| `PUT` update | no | new: `PUT /v1/intents/{id}`, ledgered update on an open intent |
+| Telegram text | live | none |
+| Telegram voice/video transform | no | new: Telegram file download to box, Omni transcribes/describes, envelope carries both transcript and modality |
+| Transport layer as one seam | scattered across the three intakes | refactor: one module produces the canonical envelope |
+| Proxy: audit | ledger, running | none |
+| Proxy: retrieval + admin upload | no | new: lexical store, `/ui/knowledge` upload page, L1 context injection |
+| L0 orchestrator | `src/models/plan.js` chooses tools via Nemotron | formalize as L0 on the live intake path |
+| L1/L2/L3 contracts | implicit in Broker + gateway client | new: `level` in the manifest, structural injection by level, compile-time refusal |
