@@ -22,6 +22,8 @@ import { createInferenceClient } from "./models/client.js";
 import { createKnowledgeStore, createNemotronEmbedder } from "./knowledge/store.js";
 import { createCocoAdapter } from "./coco/adapter.js";
 import { createObservationJudge } from "./coco/judge.js";
+import { createCocoLive } from "./coco/live.js";
+import { createBus } from "./bus.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -84,8 +86,16 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   });
   // The See feed gets propose and nothing else. This is the keystone.
   const see = tokens.issue({ id: "see:leftovers", scopes: [SCOPES.PROPOSE] });
+  // The demo app watches; it holds read and can drive nothing.
+  const viewer = tokens.issue({ id: "demo:viewer", scopes: [SCOPES.READ] });
 
-  const ledger = createLedger({ path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl" });
+  // The bus feeds the output layer: every ledgered action is agent activity
+  // the demo app can watch in realtime.
+  const bus = createBus();
+  const ledger = createLedger({
+    path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl",
+    onAppend: (rec) => bus.publish("agent", { entry: rec }),
+  });
   // A deployment with a single operator identity cannot satisfy a two-person
   // rule; the store fails those closed rather than accept one tap. The operator
   // allowlist is the source of truth for how many distinct deciders exist.
@@ -119,7 +129,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
 
   const { createServer } = await import("node:http");
   const streamServer = createServer((_req, res) => { res.writeHead(426); res.end("upgrade required"); });
-  await attachStreamServer({ server: streamServer, ingest });
+  await attachStreamServer({ server: streamServer, ingest, outputs: { bus, tokens } });
   await new Promise((r) => streamServer.listen(streamPort, streamHost, r));
 
   // Outbound client mode (PRD 23.1): dial a stream that is already pushing
@@ -145,6 +155,20 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
       onLog: (m) => console.log(`  stream  ${m}`),
     });
     upstream.start();
+  }
+
+  // The LIVE COCO interface (frames + observability + describe), consumed into
+  // the input layer and republished on the bus for the demo app.
+  let cocoLive = null;
+  const cocoBase = process.env.OMODA_COCO_BASE;
+  if (cocoBase) {
+    const { WebSocket } = await import("ws");
+    const liveJudge = coco?.judge ?? createObservationJudge({ intents, ledger });
+    cocoLive = createCocoLive({
+      base: cocoBase, judge: liveJudge, bus, ledger, WebSocketImpl: WebSocket,
+      onLog: (m) => console.log(`  coco    ${m}`),
+    });
+    cocoLive.start();
   }
 
   // ── Telegram, only if configured, and only if it can fail closed ──────
@@ -179,6 +203,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}${coco ? " (coco adapter + judge)" : ""}` : ""}`);
+    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
@@ -198,13 +223,15 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`      secret  ${operator.secret}`);
     line(`    see       ${see.token}`);
     line(`      secret  ${see.secret}`);
+    line(`    viewer    ${viewer.token}`);
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient, upstream, knowledge, coco,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus,
     async close() {
       telegram?.stop();
       upstream?.stop();
+      cocoLive?.stop();
       await new Promise((r) => app.server.close(r));
       await new Promise((r) => streamServer.close(r));
     } };
