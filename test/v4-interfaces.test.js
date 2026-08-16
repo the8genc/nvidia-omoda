@@ -97,38 +97,38 @@ const PAYLOAD = {
   evidence: {}, requested_outcome: "raise the incident callout",
 };
 
-test("a bare JSON payload from a dialed stream becomes a proposed intent", () => {
+test("a bare JSON payload from a dialed stream becomes a proposed intent", async () => {
   const { dialer, intents } = dialerHarness();
-  const r = dialer.handleMessage(JSON.stringify(PAYLOAD));
+  const r = await dialer.handleMessage(JSON.stringify(PAYLOAD));
   assert.equal(r.outcome, "accepted");
   const intent = intents.get(r.intentId);
   assert.equal(intent.proposedBy, "stream:dial");
   assert.equal(intent.detector, "traffic-anomaly");
 });
 
-test("a remote-supplied event_id dedupes retransmits", () => {
+test("a remote-supplied event_id dedupes retransmits", async () => {
   const { dialer } = dialerHarness();
   const frame = JSON.stringify({ event_id: "ev-1", payload: PAYLOAD });
-  assert.equal(dialer.handleMessage(frame).outcome, "accepted");
-  assert.equal(dialer.handleMessage(frame).outcome, "duplicate");
+  assert.equal((await dialer.handleMessage(frame)).outcome, "accepted");
+  assert.equal((await dialer.handleMessage(frame)).outcome, "duplicate");
 });
 
-test("a non-JSON frame is rejected, never guessed at", () => {
+test("a non-JSON frame is rejected, never guessed at", async () => {
   const { dialer } = dialerHarness();
-  const r = dialer.handleMessage("not json at all");
+  const r = await dialer.handleMessage("not json at all");
   assert.equal(r.outcome, "rejected");
 });
 
-test("a frame that fails the contract schema is rejected with the reason", () => {
+test("a frame that fails the contract schema is rejected with the reason", async () => {
   const { dialer } = dialerHarness();
-  const r = dialer.handleMessage(JSON.stringify({ hello: "world" }));
+  const r = await dialer.handleMessage(JSON.stringify({ hello: "world" }));
   assert.equal(r.outcome, "rejected");
   assert.match(r.reason, /schema/);
 });
 
-test("the dial identity holds propose only, so a dialed stream can never consent", () => {
+test("the dial identity holds propose only, so a dialed stream can never consent", async () => {
   const { intents, dialer } = dialerHarness();
-  const r = dialer.handleMessage(JSON.stringify(PAYLOAD));
+  const r = await dialer.handleMessage(JSON.stringify(PAYLOAD));
   const intent = intents.get(r.intentId);
   intents.awaitConsent(intent.id, { actionId: "a1" });
   const decide = intents.decide({
@@ -148,11 +148,11 @@ test("the dialer redials after a close and stops cleanly", () => {
 });
 
 // ── the wrapped envelope is honest: our signature attests receipt ─────────
-test("the dialer signs with its own identity, and the ingest verifies exactly that", () => {
+test("the dialer signs with its own identity, and the ingest verifies exactly that", async () => {
   const { dialer, identity } = dialerHarness();
   // Sanity: signEvent with the dial secret over the same payload matches what
   // ingest verified, proving no signature bypass was added for outbound.
-  const r = dialer.handleMessage(JSON.stringify({ event_id: "ev-sig", ts: Math.floor(Date.now() / 1000), payload: PAYLOAD }));
+  const r = await dialer.handleMessage(JSON.stringify({ event_id: "ev-sig", ts: Math.floor(Date.now() / 1000), payload: PAYLOAD }));
   assert.equal(r.outcome, "accepted");
   assert.equal(typeof signEvent(identity.secret, "ev-sig", 1, PAYLOAD), "string");
 });

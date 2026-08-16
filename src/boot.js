@@ -20,6 +20,8 @@ import { createTelegramLoop } from "./channels/telegram-loop.js";
 import { createModalityTransform } from "./channels/modality.js";
 import { createInferenceClient } from "./models/client.js";
 import { createKnowledgeStore, createNemotronEmbedder } from "./knowledge/store.js";
+import { createCocoAdapter } from "./coco/adapter.js";
+import { createObservationJudge } from "./coco/judge.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -124,12 +126,22 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   // JSON. Host service only; frames enter the same ingest path as inbound,
   // under a fresh propose-only identity.
   let upstream = null;
+  let coco = null;
   const dialUrl = process.env.OMODA_STREAM_CONNECT;
   if (dialUrl) {
     const dialIdentity = tokens.issue({ id: `stream:dial`, scopes: [SCOPES.PROPOSE] });
     const { WebSocket } = await import("ws");
+    // COCO speaks Observation Schema v1, not our stream envelope; its adapter
+    // and the Observation Judge take the frames (PRD section 24).
+    let handleRaw = null;
+    if ((process.env.OMODA_STREAM_FORMAT ?? "").toLowerCase() === "coco") {
+      const judge = createObservationJudge({ intents, ledger });
+      coco = createCocoAdapter({ judge, ledger });
+      coco.judge = judge;
+      handleRaw = coco.handleMessage;
+    }
     upstream = createUpstreamDialer({
-      url: dialUrl, ingest, identity: dialIdentity, WebSocketImpl: WebSocket,
+      url: dialUrl, ingest, identity: dialIdentity, WebSocketImpl: WebSocket, handleRaw,
       onLog: (m) => console.log(`  stream  ${m}`),
     });
     upstream.start();
@@ -166,7 +178,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("OMODA is up.");
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
-    line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}` : ""}`);
+    line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}${coco ? " (coco adapter + judge)" : ""}` : ""}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
@@ -189,7 +201,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient, upstream, knowledge,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient, upstream, knowledge, coco,
     async close() {
       telegram?.stop();
       upstream?.stop();

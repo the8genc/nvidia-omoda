@@ -184,9 +184,12 @@ export function createUpstreamDialer({
   url, ingest, identity, WebSocketImpl,
   reconnectMs = 5000, maxReconnectMs = 60_000,
   now = () => Date.now(), onResult = null, onLog = () => {},
+  // A partner speaking its own contract (COCO's Observation Schema v1) supplies
+  // its adapter here; the generic signed-envelope wrap is the default.
+  handleRaw = null,
 }) {
   if (!url) throw new Error("upstream dialer requires a url");
-  if (!identity?.secret) throw new Error("upstream dialer requires a dial identity with a secret");
+  if (!handleRaw && !identity?.secret) throw new Error("upstream dialer requires a dial identity with a secret");
   let ws = null, running = false, backoff = reconnectMs, counter = 0, timer = null;
 
   function wrap(raw) {
@@ -201,7 +204,12 @@ export function createUpstreamDialer({
     return JSON.stringify({ event_id: eventId, ts, sig: signEvent(identity.secret, eventId, ts, payload), payload });
   }
 
-  function handleMessage(raw) {
+  async function handleMessage(raw) {
+    if (handleRaw) {
+      const result = await handleRaw(String(raw));
+      onResult?.(result);
+      return result;
+    }
     const wrapped = wrap(raw);
     const result = wrapped
       ? ingest.ingest(wrapped, identity)
