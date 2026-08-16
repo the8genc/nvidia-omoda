@@ -5,9 +5,10 @@
 //
 //   /v1/out/frames        the relayed COCO video feed, one JSON per frame
 //   /v1/out/observations  COCO descriptions plus OMODA's judgment of each
-//   /v1/out/agents        realtime agent activity: every ledgered action as it
-//                         lands (broker admits and refusals, judge verdicts,
-//                         escalations, decisions, gateway and telegram events)
+//   /v1/out/agents        a thin activity ticker: two fields per event, the agent
+//                         name and the action it is taking (plus seq for order).
+//                         The full detail, authority, intent, tier, hash chain,
+//                         now lives in /v1/out/audit and /ui/audit.
 //
 // Read requires a token like everything else: a viewer holds intent:read and
 // nothing else, so the demo app can watch the platform and cannot drive it.

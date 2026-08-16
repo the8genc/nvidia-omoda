@@ -128,17 +128,17 @@ test("describe() asks the one-off question and is ledgered either way", async ()
   assert.ok(led.all().some((e) => e.tool === "coco.describe" && e.outcome === "answered"));
 });
 
-test("agent activity reaches the bus as a compact display event: name, level, action, instruction", async () => {
+test("agent activity reaches the bus as a thin ticker event: agent name and action only", async () => {
   const { bus, led } = harness();
   const agentEvents = [];
   bus.subscribe("agent", (e) => agentEvents.push(e));
   led.append({ kind: "api", agent: "operator:arif", tool: "intents.update", verb: "update", outcome: "updated", reason: "operator edited the engagement" });
   assert.equal(agentEvents.length, 1);
   const e = agentEvents[0];
-  assert.match(e.headline, /operator/i, "the event leads with a human sentence");
-  assert.equal(e.agent.name, "operator:arif");
-  assert.equal(e.agent.level, "operator");
-  assert.equal(e.seq, 1, "seq links back to the full record on /v1/ledger");
+  assert.equal(e.agent, "the operator", "just the agent name");
+  assert.equal(e.action, "operator edited the engagement", "and the action it is taking");
+  assert.equal(e.seq, 1, "seq links back to the full record on /v1/ledger and /ui/audit");
+  assert.equal(e.headline, undefined, "no prose headline; the detail is in the audit trail");
   assert.equal(e.entry, undefined, "the bulky record is not on the wire");
 });
 
@@ -185,8 +185,8 @@ test("the demo app subscribes with no token and sees frames, observations, and a
   await new Promise((resolve) => { const i = setInterval(() => { if (received.frame.length && received.observation.length && received.agent.length) { clearInterval(i); resolve(); } }, 15); });
   assert.equal(received.frame[0].seq, 1);
   assert.equal(received.observation[0].verdict, "nominal");
-  assert.match(received.agent[0].headline, /.+/, "a human headline arrives");
-  assert.equal(received.agent[0].agent.level, 0, "the judge is L0");
+  assert.equal(received.agent[0].agent, "omoda judge", "just the agent name arrives");
+  assert.equal(received.agent[0].action, "traffic-accident high", "and the action it is taking");
 });
 
 test("a lagging viewer gets frames dropped, never an unbounded queue", () => {
