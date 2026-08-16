@@ -29,17 +29,33 @@ test("match is deterministic substring over the text, case-insensitive", (t) => 
   assert.equal(s.match("cars moving normally through the intersection"), null);
 });
 
+test("match is negation-aware and catches the overturned-vehicle case (from training data)", (t) => {
+  const s = createTriggerStore({ path: tmp(t), ledger: ledger() });
+  // negated hazards are NOT triggers: benign frames say exactly this
+  assert.equal(s.match("A car drives through the intersection. There are no visible hazards."), null);
+  assert.equal(s.match("No visible obstruction in the road."), null);
+  assert.equal(s.match("there is no smoke"), null);
+  // a real, un-negated hazard still fires
+  assert.equal(s.match("smoke is pouring from the hood").rule.incidentType, "fire");
+  // the overturned-truck false negative the capture surfaced is now caught
+  assert.equal(s.match("a large truck is overturned, blocking lanes").rule.incidentType, "traffic-accident");
+  assert.equal(s.match("the sedan is on its side").rule.incidentType, "traffic-accident");
+  // "signage" was removed as a benign match; the specific sign phrases remain
+  assert.equal(s.match("new signage was installed"), null);
+  assert.equal(s.match("a sign is down across the lane").rule.incidentType, "fallen-signage");
+});
+
 test("admin can add and remove triggers, ledgered and persisted", (t) => {
   const path = tmp(t);
   const led = ledger();
   const s = createTriggerStore({ path, ledger: led });
   const before = s.size;
-  const added = s.add({ phrases: "rollover, overturned", incidentType: "traffic-accident", l1: "accident", action: "handle the rollover" });
+  const added = s.add({ phrases: "jackknifed, tanker leak", incidentType: "traffic-accident", l1: "accident", action: "handle the jackknife" });
   assert.equal(added.ok, true);
-  assert.equal(s.match("an overturned truck").rule.l1, "accident");
+  assert.equal(s.match("a jackknifed semi").rule.l1, "accident");
   assert.equal(createTriggerStore({ path, ledger: led }).size, before + 1, "persisted for next boot");
   assert.equal(s.remove(added.rule.id).ok, true);
-  assert.equal(s.match("an overturned truck"), null);
+  assert.equal(s.match("a jackknifed semi"), null);
   assert.ok(led.all().some((e) => e.tool === "triggers.add"));
   assert.ok(led.all().some((e) => e.tool === "triggers.remove"));
 });

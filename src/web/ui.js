@@ -75,6 +75,7 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui/intents", className: active === "intents" ? "on" : "" }, "Intents"),
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
           h("a", { href: "/ui/audit", className: active === "audit" ? "on" : "" }, "Audit"),
+          h("a", { href: "/ui/training", className: active === "training" ? "on" : "" }, "Training"),
           h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
           h("a", { href: "/ui/knowledge", className: active === "knowledge" ? "on" : "" }, "Knowledge"),
           h("a", { href: "/ui/triggers", className: active === "triggers" ? "on" : "" }, "Triggers"),
@@ -183,6 +184,51 @@ export function LedgerPage({ entries, chain }) {
       ),
     h("p", { className: "note" },
       "Written and fsynced before each action runs, so a crash between deciding and acting still leaves evidence."),
+  );
+}
+
+/**
+ * The training page: one button to start/stop capturing the descriptions flowing
+ * in, labeled action / borderline / normal, to a JSONL file the team trains on.
+ * This is the durable version of the ad-hoc capture that seeded the trigger work.
+ */
+export function TrainingPage({ csrf, status, added = null, stopped = null }) {
+  const s = status ?? { active: false, tally: { action: 0, borderline: 0, normal: 0, total: 0 } };
+  const t = s.tally ?? { action: 0, borderline: 0, normal: 0, total: 0 };
+  return h(Layout, { title: "training", active: "training" },
+    h("h2", null, "Agent training capture  ",
+      s.active ? pill("recording", "ok") : pill("idle", "dim")),
+    h("p", { className: "note" },
+      "Records every frame description flowing in from the video stream, labeled the way L0 judges it, ",
+      "to a JSONL file you can train the take-action triggers on. Reads the live triggers, so labels ",
+      "reflect the current configuration. Start before a run, stop when done, then pull the file from ",
+      h("code", null, "var/training/"), "."),
+    stopped ? h("div", { className: "okbox" },
+      `Stopped. ${stopped.tally?.total ?? 0} rows captured `
+      + `(action ${stopped.tally?.action ?? 0}, borderline ${stopped.tally?.borderline ?? 0}, normal ${stopped.tally?.normal ?? 0}). `
+      + `File: ${stopped.file ?? "-"}`) : null,
+    added ? h("div", { className: "okbox" }, `Recording started. Writing to ${added}`) : null,
+    h("div", { style: { display: "flex", gap: 12, alignItems: "center", margin: "14px 0" } },
+      s.active
+        ? h("form", { className: "inline", method: "post", action: "/ui/training/stop" },
+          h("input", { type: "hidden", name: "csrf", value: csrf }),
+          h("button", { className: "deny", type: "submit" }, "Stop capture"))
+        : h("form", { className: "inline", method: "post", action: "/ui/training/start" },
+          h("input", { type: "hidden", name: "csrf", value: csrf }),
+          h("button", { type: "submit" }, "Start capture")),
+      s.active && s.file ? h("span", { className: "note" }, "writing to ", h("code", null, s.file)) : null,
+    ),
+    h("table", null,
+      h("thead", null, h("tr", null, ["This session", "Rows"].map((c) => h("th", { key: c }, c)))),
+      h("tbody", null,
+        h("tr", null, h("td", null, "action (L0 would route to an L1)"), h("td", { className: "mono" }, t.action)),
+        h("tr", null, h("td", null, "borderline (signals, judged not an incident)"), h("td", { className: "mono" }, t.borderline)),
+        h("tr", null, h("td", null, "normal"), h("td", { className: "mono" }, t.normal)),
+        h("tr", null, h("td", null, h("strong", null, "total")), h("td", { className: "mono" }, h("strong", null, t.total))),
+      )),
+    h("p", { className: "note" },
+      "Borderline rows are the richest for tuning: signals fired but no trigger word matched, ",
+      "so they surface phrases worth adding. Feed footage that describes hazards in new words to grow this set."),
   );
 }
 
