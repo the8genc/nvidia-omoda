@@ -7,15 +7,15 @@ capabilities:
   - tool: roadside.segment.read
     verb: read
     impact: []
-    egress: { host: roads.seattle.gov, port: 443, path: "/api/segments/**" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/roads/segments/**" }
   - tool: roadside.workorder.create
     verb: create
     impact: []
-    egress: { host: roads.seattle.gov, port: 443, path: "/api/workorders" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/roads/workorders" }
   - tool: roadside.workorder.cancel
     verb: delete
     impact: []
-    egress: { host: roads.seattle.gov, port: 443, path: "/api/workorders/**" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/roads/workorders/**" }
 ---
 You handle roadside consequences: request a tow, flag debris for clearance,
 open a Seattle DOT work order. These are reversible and non-dangerous, so they

@@ -17,7 +17,8 @@
     "demo:live": "node src/demo/live-telegram.js",
     "serve:live": "node src/demo/serve-live.js",
     "demo:layers": "node src/demo/three-layer.js",
-    "benchmark": "node scripts/benchmark-g1.mjs"
+    "benchmark": "node scripts/benchmark-g1.mjs",
+    "mock:city": "node src/mock/serve-city.js"
   },
   "dependencies": {
     "react": "19.2.8",
