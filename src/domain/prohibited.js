@@ -117,6 +117,13 @@ export function prohibitedReason(action = {}) {
     if (GATEWAY_CONTROL_PLANE.includes(method)) return "gateway-self-protection";
   }
 
+  // 7b: actions with no acceptable blast radius at all. A city-wide emergency
+  // broadcast is not a thing an agent may do even with two human approvals; the
+  // point of the prohibited list is that some capabilities have no decision path.
+  if (tool === "dispatch.mass_broadcast" || tool === "dispatch.city_alert") {
+    return "no-mass-broadcast";
+  }
+
   // 8: destructive git on refs we do not own.
   if (tool === "git.push" || tool === "git.branch") {
     const ref = String(args.ref || args.branch || "");

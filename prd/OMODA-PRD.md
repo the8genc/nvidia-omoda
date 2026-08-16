@@ -1048,3 +1048,87 @@ Their PRD says **"Submission: one combined See-to-Do product in a monorepo."**
 Merging repositories is an organizational act affecting both teams' history and
 CI; OMODA will not do it unilaterally. Tracked as an issue for Arif and the See
 team to decide before the 11:00 freeze.
+
+---
+
+## 25. Demo skill architecture (accident + fire), and the OpenShell showcase
+
+Source: "OMODA Skill Architecture for the Demo" (transcript, 2026-08-16). Two
+scenarios, both from COCO video: a vehicle collision and a fire. This section is
+the org chart as agreed, plus the additions that make the OpenShell
+dangerous-action work legible on screen.
+
+### 25.1 The org chart
+
+```
+L0 orchestrator            routes on incident_type (traffic-accident | fire)
+├─ L1 accident-agent       domain: collisions
+│    ├─ L2 ambulatory       request EMS            (shared with fire-agent)
+│    └─ L2 police           notify / request police
+├─ L1 fire-agent           domain: fires
+│    ├─ L2 ambulatory       (the same shared agent)
+│    └─ L2 fire-department  request fire response
+├─ L2 roadside             tow trucks, debris clearance, Seattle DOT (non-dangerous)
+└─ L3 emergency-dispatch   the 911 tooling every L2 shares, governed by OpenShell
+```
+
+Decisions carried from the transcript:
+- **L0 routes by incident type.** This is the judge's `incident_type` plus the
+  orchestrator (section 24, and now wired into the intake loop). `fire` is added
+  to the judge's class enum for this.
+- **The 911 call is the dangerous, deliberately non-human-gated action** the
+  whole platform exists to protect. It is one shared L3 tooling agent, not
+  context-aware, that any L2 invokes.
+- **Ambulatory is shared** across both L1s. Skills are files; sharing is
+  referencing the same agent.
+- **Reporting is NOT a separate L3.** It is the proxy-layer audit between L0 and
+  L1, which is the hash-chained ledger plus the `/v1/out/agents` stream. A final
+  summary agent is a nice-to-have, not P0.
+- **Roadside/maintenance stays L2** (non-destructive).
+
+### 25.2 The OpenShell showcase: making the taxonomy visible
+
+The transcript's instinct ("dangerous, but don't human-gate it; make sure it
+can't do something nefarious") is exactly the two-axis taxonomy. The demo should
+show the whole spectrum in one agent rather than only the escalation case, so a
+judge sees reads run free, contained writes run with a way back, consequential
+writes compile to read-only until a decision, and prohibited actions have no
+decision path at all.
+
+**L3 `emergency-dispatch`** spans the spectrum by CRUD verb:
+
+| capability | verb | impact | what the demo shows |
+|---|---|---|---|
+| `dispatch.status.read` | read | [] | runs free, no human |
+| `dispatch.unit.request` | create | [legal] | **approval**: the POST is absent from policy until a recorded decision |
+| `dispatch.callout.cancel` | delete | [legal, reputational] | **two-person**: cancelling an emergency response takes two |
+
+**L2 `roadside`** is the contained-write beat the emergency agents lack:
+
+| capability | verb | impact | what the demo shows |
+|---|---|---|---|
+| `roadside.segment.read` | read | [] | free |
+| `roadside.workorder.create` | create | [] | autonomous, ledgered, **real UNDO token** (a tow request is reversible) |
+| `roadside.workorder.cancel` | delete | [] | autonomous with an inverse |
+
+**The prohibited beat.** `dispatch.mass_broadcast` (city-wide alerting) sits on
+the prohibited list: even a valid two-person decision is refused. This is the
+counterpoint that proves the gate is structural, not "ask nicely twice."
+
+**The self-protection beat.** An agent attempts to widen egress or disable
+device auth "to reach dispatch faster"; the Broker refuses with
+`gateway-self-protection` while holding a valid decision. The most differentiated
+thirty seconds in the demo: a consent path that cannot dismantle the consent
+mechanism.
+
+### 25.3 What this requires in code
+
+- Add `fire` to the judge's incident classes and the candidate lexicon.
+- Ship the manifests: `accident-agent` (L1), `fire-agent` (L1), `ambulatory`
+  (L2, shared), `police` (L2), `fire-department` (L2), `roadside` (L2),
+  `emergency-dispatch` (L3). All are `omoda.skill.md` files; the compiler and
+  level contract already enforce the hierarchy.
+- Add `dispatch.mass_broadcast` to `src/domain/prohibited.js`.
+- The rest already exists: L0 routing, consent stages, approval-scoped
+  capability, two-person enforcement, UNDO, the agentic stream that lets the
+  demo narrate every hop.
