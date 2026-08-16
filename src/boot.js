@@ -279,7 +279,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     const mediaTransform = createModalityTransform({
       transport, token: tgToken, inference: createInferenceClient({ timeoutMs: 180_000 }),
     });
-    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport, mediaTransform, undo });
+    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, bus, policy, operator, transport, mediaTransform, undo });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
     // Close the human gate: when L0 routes a dangerous action, send the operator
     // an Approve/Deny message on the first allowed chat. Inbound taps are already

@@ -120,3 +120,48 @@ test("polling advances the offset so updates are not reprocessed", async () => {
   assert.equal(offsets[1], 3, "offset moved past update_id 2");
   harness.queue = [];
 });
+
+test("an approve tap flows back to the audit and agent streams (not stuck on awaiting)", async () => {
+  const { createBus } = await import("../src/bus.js");
+  const { skillLevelMap } = await import("../src/telemetry/display.js");
+  const { loadSkills } = await import("../src/skills/load.js");
+  const { isAuditWorthy, ledgerToAudit } = await import("../src/telemetry/audit.js");
+
+  const bus = createBus();
+  const audit = [], agent = [];
+  bus.subscribe("audit", (e) => audit.push(e));
+  bus.subscribe("agent", (e) => agent.push(e));
+  const levels = skillLevelMap(loadSkills().skills);
+  const sentTg = [];
+  const transport = async (method, params) => { sentTg.push({ method, params }); return { ok: true, result: {} }; };
+  const client = createTelegramClient({ transport, allowedIds: [OPERATOR_TG] });
+  const intents = createIntentStore();
+  const ledger = createLedger({
+    path: `/tmp/omoda-tgdec-${Date.now()}-${Math.random()}.jsonl`,
+    onAppend: (rec) => { if (isAuditWorthy(rec)) bus.publish("audit", ledgerToAudit(rec, levels)); },
+  });
+  const operator = { id: "operator:arif", scopes: ["intent:decide"] };
+  const see = { id: "see:cam3", scopes: ["intent:propose"] };
+  const loop = createTelegramLoop({ client, intents, ledger, bus, operator });
+
+  // a gated action escalated and awaiting the tap
+  const { intent } = intents.propose({ idempotencyKey: "k", caller: see, body: { requested_outcome: "respond", evidence: { incident_type: "traffic-accident" } } });
+  intents.awaitConsent(intent.id, { actionId: "act-1", agent: "emergency-dispatch", tool: "dispatch.unit.request", verb: "create", impact: ["legal"] });
+
+  await loop.handle(cb(`approve:${intent.id}:act-1`));
+
+  // audit stream: the operator's approval, naming the real tool, linked by intent
+  const dec = audit.find((e) => e.outcome === "approved");
+  assert.ok(dec, "the approval reached the audit stream");
+  assert.equal(dec.tool, "dispatch.unit.request", "it names the decided tool, not telegram.decide");
+  assert.equal(dec.authority.kind, "operator");
+  assert.equal(dec.intent.id, intent.id, "linked to the escalation by intent id");
+
+  // agent stream: the resolution, so a consumer moves it off 'awaiting'
+  const a = agent.find((e) => e.decision === "approved");
+  assert.ok(a, "the approval reached the agent stream");
+  assert.equal(a.agentRoutedTo, "emergency-dispatch");
+  assert.equal(a.incident, "traffic-accident");
+  assert.equal(a.action, "dispatch.unit.request");
+  assert.equal(a.intentId, intent.id);
+});

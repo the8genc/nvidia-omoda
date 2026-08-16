@@ -11,6 +11,7 @@ export function createTelegramLoop({
   client,
   intents,
   ledger,
+  bus = null,
   policy = null,
   operator,
   pollTimeoutSec = 25,
@@ -59,12 +60,44 @@ export function createTelegramLoop({
           verdict: cmd.verdict, decidedBy: operator.id,
         });
       }
-      record({
-        tool: "telegram.decide",
-        outcome: out.ok ? "recorded" : "refused",
-        reason: out.ok ? cmd.verdict : out.reason,
+      // The operator's decision is a first-class audit event and must flow back
+      // to the streams: an escalation stuck at "awaiting approval" resolves here.
+      // Look up the action that was decided so the record names the real tool, not
+      // just "telegram.decide", and so the audit projection reads meaningfully.
+      const decided = out.ok
+        ? (intents.get(cmd.intentId)?.actions ?? []).find((a) => a.actionId === cmd.actionId) ?? null
+        : null;
+      const settledOutcome = out.ok
+        ? (out.decision?.settled === false ? "approved-partial" : (cmd.verdict === "approve" ? "approved" : "denied"))
+        : "refused";
+      // kind "decision" is audit-worthy (unlike kind "telegram"), so onAppend
+      // publishes it to /v1/out/audit; here we also push it to the agent stream.
+      const decisionEntry = {
+        kind: "decision",
+        agent: operator.id,
+        tool: decided?.tool ?? "telegram.decide",
+        verb: decided?.verb ?? "update",
+        impact: decided?.impact ?? [],
+        authority: `operator:${operator.id}`,
+        decidedBy: operator.id,
+        outcome: settledOutcome,
+        reason: out.ok ? `operator ${cmd.verdict}${out.decision?.settled === false ? " (1 of 2)" : ""}` : out.reason,
         intentId: cmd.intentId,
-      });
+      };
+      try { ledger.append({ verb: decisionEntry.verb, ...decisionEntry }); } catch { /* best effort */ }
+      if (bus && decided) {
+        const incident = intents.get(cmd.intentId)?.evidence?.incident_type ?? null;
+        try {
+          bus.publish("agent", {
+            agentRoutedTo: decided.agent ?? null,
+            incident,
+            action: decided.tool,
+            decision: settledOutcome,
+            by: operator.id,
+            intentId: cmd.intentId,
+          });
+        } catch { /* never break the loop on a publish */ }
+      }
       return { ...cmd, ok: out.ok };
     }
 
