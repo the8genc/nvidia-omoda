@@ -28,6 +28,7 @@ class LiveLoop:
         self._loop = None
         self._seq = 0
         self._last_rgb = None  # latest RAW frame as a jpeg data-uri, for the VLM only (it must see the real scene)
+        self._generation = 0  # bumped on every clip switch; a describe that started on an old clip is stale
         self._running = True
         # the freshest decoded frame, handed to the worker threads. Guarded by _cv, which the producer
         # and every state change notify so a waiting worker re-evaluates without polling.
@@ -68,6 +69,7 @@ class LiveLoop:
         # a new clip starts from the safe defaults: locked (privacy on), FastSAM, no lingering reveal.
         with self._cv:
             self._pending_source = path
+            self._generation += 1  # invalidates any describe that started on the previous clip
             self._hazard = False
             self._reveal_until = 0.0
             self._privacy_mode = "sam"
@@ -89,11 +91,18 @@ class LiveLoop:
             item = self._latest_frame
         return item[0] if item else None
 
-    def set_hazard(self, value):
-        # break-glass: True unlocks the raw feed on rgb-stream; False re-locks it to the privacy view
+    def set_hazard(self, value, generation=None):
+        # break-glass: True unlocks the raw feed on rgb-stream; False re-locks it to the privacy view.
+        # `generation` scopes the decision to the clip it was made on — a describe that started before a
+        # clip switch must not set the hazard on the new clip.
         with self._cv:
+            if generation is not None and generation != self._generation:
+                return
             self._hazard = bool(value)
             self._cv.notify_all()  # wake the privacy worker to resume/pause
+
+    def generation(self):
+        return self._generation
 
     def hazard(self):
         return self._hazard

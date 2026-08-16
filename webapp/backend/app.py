@@ -294,12 +294,15 @@ async def describe(prompt: str | None = None, followup: str | None = None, follo
     frame = LIVE.latest_frame()
     if frame is None:
         return JSONResponse({"error": "no frame captured yet"}, status_code=503)
+    # the clip this describe is about; if the user switches clips while the VLM runs, the answer is stale
+    generation = LIVE.generation()
     result = await run_in_threadpool(_describe_frame, frame, prompt, followup, followup_bool)
     # a boolean follow-up (the banner's public-hazard question) is the break-glass signal: it unlocks
-    # the raw feed on rgb-stream when True and re-locks to the obfuscated view when False.
+    # the raw feed on rgb-stream when True and re-locks to the obfuscated view when False. Scoped to the
+    # clip it ran on, so a describe from before a switch cannot unlock the new clip.
     answer = result.get("followup", {}).get("answer")
     if followup_bool and isinstance(answer, bool):
-        LIVE.set_hazard(answer)
+        LIVE.set_hazard(answer, generation)
     OBS.publish({"prompt": prompt, **result})
     return result
 
