@@ -24,6 +24,7 @@ import { createCocoAdapter } from "./coco/adapter.js";
 import { createObservationJudge } from "./coco/judge.js";
 import { createCocoLive } from "./coco/live.js";
 import { createBus } from "./bus.js";
+import { createAgenticTelemetry, setGlobalTelemetry } from "./telemetry/agentic.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -92,6 +93,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   // The bus feeds the output layer: every ledgered action is agent activity
   // the demo app can watch in realtime.
   const bus = createBus();
+  // Every instrumented module narrates onto /v1/out/agentic from here on.
+  setGlobalTelemetry(createAgenticTelemetry({ bus }));
   const ledger = createLedger({
     path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl",
     onAppend: (rec) => bus.publish("agent", { entry: rec }),
@@ -203,7 +206,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}${coco ? " (coco adapter + judge)" : ""}` : ""}`);
-    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
+    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);

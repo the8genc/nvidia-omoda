@@ -21,6 +21,7 @@
 
 import { createInferenceClient, extractJson, stripReasoning } from "./client.js";
 import { route, TASK } from "./router.js";
+import { telemetry } from "../telemetry/agentic.js";
 
 export class PlanRefused extends Error {
   constructor(message, { proposed = null } = {}) {
@@ -123,6 +124,7 @@ export async function planAction({
   const reason = String(parsed.reason ?? "").trim() || "no reason given";
 
   if (!proposed || proposed.toLowerCase() === "null") {
+    telemetry.route({ actor: "l0", target: null, detail: { decision: "no-tool", reason } });
     return { tool: null, reason, ...meta };
   }
 
@@ -135,5 +137,6 @@ export async function planAction({
     );
   }
 
+  telemetry.route({ actor: "l0", target: proposed, detail: { decision: "tool-selected", reason, model: out.model } });
   return { tool: proposed, reason, ...meta };
 }

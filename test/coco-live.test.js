@@ -51,7 +51,7 @@ test("the bus publishes to subscribers and isolates a throwing one", () => {
   assert.equal(got.length, 1);
   assert.equal(got[0].topic, "frame");
   assert.throws(() => bus.publish("nope", {}), /unknown bus topic/);
-  assert.deepEqual(TOPICS, ["frame", "observation", "agent"]);
+  assert.deepEqual(TOPICS, ["frame", "observation", "agent", "agentic"]);
 });
 
 // ── the live shapes ────────────────────────────────────────────────────────

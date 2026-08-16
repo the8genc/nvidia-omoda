@@ -5,11 +5,14 @@
 //   observation  COCO descriptions plus OMODA's judgment of each
 //   agent        every ledgered action: broker admits and refusals, judge
 //                verdicts, escalations, decisions, gateway calls
+//   agentic      fine-grained narration: orchestration routing, agent-to-agent
+//                messages, tool and API calls with bounded results, inference
+//                requests and latency (src/telemetry/agentic.js)
 //
 // Subscribers are synchronous and isolated: one slow or throwing subscriber
 // never stalls the publisher, because the publisher IS the live platform.
 
-export const TOPICS = Object.freeze(["frame", "observation", "agent"]);
+export const TOPICS = Object.freeze(["frame", "observation", "agent", "agentic"]);
 
 export function createBus() {
   const subs = new Map(TOPICS.map((t) => [t, new Set()]));

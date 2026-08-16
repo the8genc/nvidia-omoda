@@ -21,6 +21,11 @@ const TOPIC_BY_PATH = Object.freeze({
   "/v1/out/frames": "frame",
   "/v1/out/observations": "observation",
   "/v1/out/agents": "agent",
+  // The narration stream: every agentic event (orchestration, agent-to-agent
+  // messages, tool/API calls and results, inference). Live from day one for
+  // the instrumented paths; more instrumentation only adds events, the
+  // envelope never changes shape.
+  "/v1/out/agentic": "agentic",
 });
 
 const MAX_BUFFERED = 2 * 1024 * 1024; // beyond this, drop rather than lag

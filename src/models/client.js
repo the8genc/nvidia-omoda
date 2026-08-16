@@ -19,6 +19,8 @@
 //      model that proposes something that gets refused, not one that acts.
 
 import { RoutingRefused } from "./router.js";
+import { telemetry, bound } from "../telemetry/agentic.js";
+import { randomUUID } from "node:crypto";
 
 export class InferenceError extends Error {
   constructor(message, { status = null, model = null } = {}) {
@@ -46,6 +48,11 @@ export function createInferenceClient({ fetchImpl = globalThis.fetch, timeoutMs 
       throw new RoutingRefused("refusing to infer without a routed model and endpoint");
     }
     const started = Date.now();
+    const correlationId = randomUUID();
+    telemetry.inferenceCall({
+      correlationId, actor: "inference-client", target: model,
+      detail: { endpoint, purpose: jsonSchema?.name ?? "completion", prompt: bound(messages?.[messages.length - 1]?.content) },
+    });
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
@@ -73,6 +80,10 @@ export function createInferenceClient({ fetchImpl = globalThis.fetch, timeoutMs 
       }
       const body = await res.json();
       const text = body?.choices?.[0]?.message?.content ?? "";
+      telemetry.inferenceResult({
+        correlationId, actor: "inference-client", target: body?.model ?? model,
+        detail: { latencyMs: Date.now() - started, usage: body?.usage ?? null, output: bound(text) },
+      });
       return {
         text,
         model: body?.model ?? model,

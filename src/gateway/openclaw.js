@@ -12,6 +12,7 @@
 // more, and the tests here are what catch it.
 
 import crypto from "node:crypto";
+import { telemetry, bound } from "../telemetry/agentic.js";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -244,10 +245,17 @@ export function createGatewayClient({ url, headers = {}, WebSocketImpl, onFrame 
       if (!ws) throw new Error("gateway not connected");
       const id = crypto.randomUUID();
       const frame = { type: "req", id, method, params };
-      return withTimeout(new Promise((resolve, reject) => {
+      const started = Date.now();
+      telemetry.apiCall({ correlationId: id, actor: "l3:openclaw", target: method, detail: { url, params: bound(params, 300) } });
+      const p = withTimeout(new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         ws.send(JSON.stringify(frame));
       }), timeoutMs, `gateway ${method} timeout`);
+      p.then(
+        (payload) => telemetry.apiResult({ correlationId: id, actor: "l3:openclaw", target: method, detail: { latencyMs: Date.now() - started, ok: true, body: bound(payload, 400) } }),
+        (err) => telemetry.apiResult({ correlationId: id, actor: "l3:openclaw", target: method, detail: { latencyMs: Date.now() - started, ok: false, error: bound(err.message, 200) } }),
+      );
+      return p;
     },
 
     close() { try { ws?.close(); } catch { /* already gone */ } },
