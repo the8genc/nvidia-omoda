@@ -16,16 +16,16 @@ const client = (tool) => ({ async complete() { return { text: JSON.stringify({ t
 // ── L0 wired into the standing intake loop ────────────────────────────────
 test("a proposed intent is automatically routed to a declared capability, awaiting consent", async () => {
   const intents = createIntentStore();
-  const orch = createOrchestrator({ intents, registry, ledger: ledger(), client: client("quickbooks.invoice.create") });
+  const orch = createOrchestrator({ intents, registry, ledger: ledger(), client: client("dispatch.unit.request") });
   intents.onPropose = null; // wire manually for determinism
-  const { intent } = intents.propose({ idempotencyKey: "k1", caller: { id: "see:cam", scopes: ["intent:propose"] }, body: { requested_outcome: "raise the incident invoice" } });
+  const { intent } = intents.propose({ idempotencyKey: "k1", caller: { id: "see:cam", scopes: ["intent:propose"] }, body: { requested_outcome: "request an ambulance for the collision" } });
   const r = await orch.onIntent(intent);
   assert.equal(r.routed, true);
-  assert.equal(r.tool, "quickbooks.invoice.create");
+  assert.equal(r.tool, "dispatch.unit.request");
   assert.equal(r.consent, "approval");
   const after = intents.get(intent.id);
   assert.equal(after.actions.length, 1, "an action now awaits consent");
-  assert.equal(after.actions[0].tool, "quickbooks.invoice.create");
+  assert.equal(after.actions[0].tool, "dispatch.unit.request");
 });
 
 test("the onPropose hook fires L0 on every intake, and never on a duplicate", async () => {
@@ -49,8 +49,8 @@ test("L0 refuses when the model names an undeclared tool; nothing is awaited", a
 
 test("L0 is idempotent: an already-routed intent is not routed again", async () => {
   const intents = createIntentStore();
-  const orch = createOrchestrator({ intents, registry, ledger: ledger(), client: client("quickbooks.invoice.read") });
-  const { intent } = intents.propose({ idempotencyKey: "k3", caller: { id: "x", scopes: [] }, body: { requested_outcome: "check the invoice" } });
+  const orch = createOrchestrator({ intents, registry, ledger: ledger(), client: client("dispatch.status.read") });
+  const { intent } = intents.propose({ idempotencyKey: "k3", caller: { id: "x", scopes: [] }, body: { requested_outcome: "check unit status" } });
   await orch.onIntent(intent);
   const second = await orch.onIntent(intent);
   assert.equal(second.routed, false);
@@ -59,12 +59,12 @@ test("L0 is idempotent: an already-routed intent is not routed again", async () 
 
 test("L0 selects the tool but never the danger: verb and impact come from the manifest", async () => {
   const intents = createIntentStore();
-  const orch = createOrchestrator({ intents, registry, ledger: ledger(), client: client("quickbooks.invoice.void") });
-  const { intent } = intents.propose({ idempotencyKey: "k4", caller: { id: "x", scopes: [] }, body: { requested_outcome: "void it" } });
+  const orch = createOrchestrator({ intents, registry, ledger: ledger(), client: client("dispatch.callout.cancel") });
+  const { intent } = intents.propose({ idempotencyKey: "k4", caller: { id: "x", scopes: [] }, body: { requested_outcome: "cancel the callout" } });
   await orch.onIntent(intent);
   const action = intents.get(intent.id).actions[0];
   assert.equal(action.verb, VERB.DELETE, "verb is the manifest's");
-  assert.deepEqual([...action.impact].sort(), ["financial", "legal"]);
+  assert.deepEqual([...action.impact].sort(), ["legal", "reputational"]);
   assert.ok(action.inverse, "a destructive verb carries an inverse spec for UNDO");
 });
 
