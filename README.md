@@ -4,7 +4,16 @@
 
 NVIDIA Spark Hackathon, Seattle. **Track: Do.** Runs on the shared Acer Veriton GN100 (DGX Spark, `gn100-390c`), tailnet only.
 
-Sibling project: [`the8genc/leftovers`](https://github.com/the8genc/leftovers) (See track, computer vision). See perceives the physical world; OMODA acts on it.
+**This is the combined See-to-Do monorepo.** The root is OMODA (Do track): the
+autonomy broker that judges, consents, executes, and audits. [`see/`](see/) is
+COCO (See track, from [`fredrikolis/leftover-cv-pipeline`](https://github.com/fredrikolis/leftover-cv-pipeline),
+history preserved): the perception pipeline that turns a live intersection
+camera into factual observations. COCO describes what is visible; OMODA decides
+what it means and acts under policy. The seam between them is live on the box:
+OMODA consumes COCO's frame and observability streams at `:8091`, judges each
+observation, and republishes everything plus its own agent activity on
+`ws://…:3111/v1/out/*` for the demo dashboard
+([`docs/demo-stream-contract.md`](docs/demo-stream-contract.md)).
 
 ---
 
