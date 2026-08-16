@@ -1,6 +1,6 @@
 <!-- Concern: render the live rgb frame with an optional generic bbox overlay, kept in sync by seq | Non-concern: what a box means — it draws rectangles + label strings the backend sends, no domain branching | IO: (live) -> panel -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ImageOff } from 'lucide-vue-next'
 import PanelFrame from '@/components/layout/PanelFrame.vue'
 import { LIVE_KEY } from '@/types/pipeline'
@@ -9,6 +9,8 @@ import { injectStrict } from '@/composables/injectStrict'
 const live = injectStrict(LIVE_KEY)
 
 const showBoxes = ref(false)
+// only run detection (YOLOE) while boxes are actually on screen
+watch(showBoxes, (on) => live.setBoxesShown(on), { immediate: true })
 
 const hasFrame = computed(() => live.latestRgb.value !== null)
 const rgbUrl = computed(() => live.latestRgb.value?.rgb ?? '')

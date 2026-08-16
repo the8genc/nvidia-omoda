@@ -7,10 +7,6 @@ const API_BASE = `http://${API_HOST}:8091/api`
 // consumers subscribe only to the streams they need.
 const WS_BASE = `ws://${API_HOST}:8091/api`
 
-export function vocabularyWsUrl(): string {
-  return `${WS_BASE}/public/vocabulary-stream`
-}
-
 export function detectionWsUrl(): string {
   return `${WS_BASE}/local/detection-stream`
 }
@@ -26,4 +22,16 @@ export function describeUrl(): string {
 
 export function liveSourceUrl(): string {
   return `${API_BASE}/live/source`
+}
+
+export function livePauseUrl(): string {
+  return `${API_BASE}/live/pause`
+}
+
+export function liveResumeUrl(): string {
+  return `${API_BASE}/live/resume`
+}
+
+export function liveNextDefaultUrl(): string {
+  return `${API_BASE}/live/next-default`
 }

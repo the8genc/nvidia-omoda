@@ -11,16 +11,8 @@ export interface DetectionBox {
   conf: number
 }
 
-// one message per concern stream — each socket carries only its concern.
-// seq is a global monotonic frame id (never resets on loop) shared across streams, so a consumer
-// can align rgb with its detections instead of showing whichever arrived last.
-export interface VocabularyMessage {
-  seq: number
-  index: number
-  n_frames: number
-  scene: Record<string, unknown>
-}
-
+// one message per concern stream. seq is a global monotonic frame id (never resets on loop) shared
+// across streams, so the overlay can align to the rgb frame actually painted, not whatever arrived last.
 export interface DetectionMessage {
   seq: number
   index: number
@@ -37,16 +29,17 @@ export interface RgbMessage {
 export interface LiveContext {
   enabled: Readonly<Ref<boolean>>
   connected: Readonly<Ref<boolean>>
-  index: Readonly<Ref<number>>
-  nFrames: Readonly<Ref<number>>
-  // scene + boxes resolved to the frame actually painted (see commitDisplayedFrame), so every view is coherent
-  displayedScene: Readonly<Ref<Record<string, unknown> | null>>
+  // boxes resolved to the frame actually painted (see commitDisplayedFrame) so the overlay stays coherent
   displayedBoxes: Readonly<Ref<DetectionBox[]>>
   latestRgb: Readonly<Ref<RgbMessage | null>>
-  messagesPerSec: Readonly<Ref<number>>
+  running: Readonly<Ref<boolean>>
   commitDisplayedFrame: (seq: number) => void
+  pause: () => Promise<void>
+  resume: () => Promise<void>
+  nextDefault: () => Promise<void>
   toggle: () => void
   setEnabled: (value: boolean) => void
+  setBoxesShown: (value: boolean) => void
   submitSource: (file: File) => Promise<void>
 }
 

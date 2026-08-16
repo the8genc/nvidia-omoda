@@ -1,23 +1,18 @@
-// Concern: compose the per-concern websocket streams into one LiveContext, aligning scene + boxes to the frame actually painted (by seq), plus source upload | Non-concern: socket mechanics (useWsJson owns), rendering (panels own) | IO: (enabled) -> LiveContext
-import { computed, ref, watch, type Ref } from 'vue'
-import { detectionWsUrl, liveSourceUrl, rgbWsUrl, vocabularyWsUrl } from '@/api/config'
+// Concern: compose the detection + rgb websocket streams into one LiveContext, aligning boxes to the painted frame (by seq), plus source upload and play/stop | Non-concern: socket mechanics (useWsJson owns), rendering (panels own) | IO: (enabled) -> LiveContext
+import { computed, readonly, ref, watch, type Ref } from 'vue'
+import {
+  detectionWsUrl,
+  liveNextDefaultUrl,
+  livePauseUrl,
+  liveResumeUrl,
+  liveSourceUrl,
+  rgbWsUrl,
+} from '@/api/config'
 import { useWsJson } from '@/composables/useWsJson'
-import type {
-  DetectionBox,
-  DetectionMessage,
-  LiveContext,
-  RgbMessage,
-  VocabularyMessage,
-} from '@/types/pipeline'
+import type { DetectionBox, DetectionMessage, LiveContext, RgbMessage } from '@/types/pipeline'
 
-// how many recent frames of each stream to retain for seq-alignment
+// how many recent detection frames to retain for seq-alignment against the painted rgb frame
 const BUFFER = 180
-
-function isVocabulary(value: unknown): value is VocabularyMessage {
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Record<string, unknown>
-  return typeof v.seq === 'number' && typeof v.scene === 'object' && v.scene !== null
-}
 
 function isDetection(value: unknown): value is DetectionMessage {
   if (typeof value !== 'object' || value === null) return false
@@ -31,7 +26,6 @@ function isRgb(value: unknown): value is RgbMessage {
   return typeof v.seq === 'number' && typeof v.rgb === 'string'
 }
 
-// buffer keyed by seq (insertion order == seq order, since seq is monotonic); drops oldest past BUFFER
 function bufferBySeq<T extends { seq: number }>(source: Readonly<Ref<T | null>>): Map<number, T> {
   const map = new Map<number, T>()
   watch(source, (msg) => {
@@ -56,35 +50,49 @@ function atOrBefore<T>(map: Map<number, T>, target: number): T | null {
 }
 
 export function useLiveStream(enabled: Ref<boolean>): LiveContext {
-  const vocabulary = useWsJson(vocabularyWsUrl, isVocabulary, enabled)
-  const detection = useWsJson(detectionWsUrl, isDetection, enabled)
+  // the detection socket connects only while boxes are shown; with no subscriber the backend skips YOLOE
+  const wantDetection = ref(false)
+  const detectionEnabled = ref(false)
+  watch([enabled, wantDetection], ([e, w]) => (detectionEnabled.value = e && w), { immediate: true })
+
+  const detection = useWsJson(detectionWsUrl, isDetection, detectionEnabled)
   const rgb = useWsJson(rgbWsUrl, isRgb, enabled)
 
-  const vocabBySeq = bufferBySeq(vocabulary.latest)
   const detBySeq = bufferBySeq(detection.latest)
 
-  // seq of the rgb frame the browser has actually painted; every view aligns to it so the image,
-  // its boxes, and the scene json always describe the same instant
+  // seq of the rgb frame the browser has actually painted; the overlay aligns to it
   const displayedSeq = ref(-1)
   function commitDisplayedFrame(seq: number): void {
     displayedSeq.value = seq
   }
 
-  const displayedVocab = computed(() => {
-    void vocabulary.latest.value // recompute when a fresh vocab frame lands, not only on paint
-    return atOrBefore(vocabBySeq, displayedSeq.value)
-  })
-  const displayedScene = computed(() => displayedVocab.value?.scene ?? null)
   const displayedBoxes = computed<DetectionBox[]>(() => {
-    void detection.latest.value
+    void detection.latest.value // recompute when a fresh detection lands, not only on paint
     return atOrBefore(detBySeq, displayedSeq.value)?.boxes ?? []
   })
 
-  const index = computed(() => displayedVocab.value?.index ?? 0)
-  const nFrames = computed(() => displayedVocab.value?.n_frames ?? 0)
-  const connected = computed(
-    () => vocabulary.connected.value || detection.connected.value || rgb.connected.value,
-  )
+  const connected = computed(() => detection.connected.value || rgb.connected.value)
+
+  // play/stop the whole inference loop; server-owned, mirror the confirmed 200
+  const running = ref(true)
+
+  async function pause(): Promise<void> {
+    const res = await fetch(livePauseUrl(), { method: 'POST' })
+    if (!res.ok) throw new Error(`Pause failed (${res.status})`)
+    running.value = false
+  }
+
+  async function resume(): Promise<void> {
+    const res = await fetch(liveResumeUrl(), { method: 'POST' })
+    if (!res.ok) throw new Error(`Resume failed (${res.status})`)
+    running.value = true
+  }
+
+  async function nextDefault(): Promise<void> {
+    const res = await fetch(liveNextDefaultUrl(), { method: 'POST' })
+    if (!res.ok) throw new Error(`Next default failed (${res.status})`)
+    running.value = true
+  }
 
   function toggle(): void {
     enabled.value = !enabled.value
@@ -94,25 +102,31 @@ export function useLiveStream(enabled: Ref<boolean>): LiveContext {
     enabled.value = value
   }
 
+  function setBoxesShown(value: boolean): void {
+    wantDetection.value = value
+  }
+
   async function submitSource(file: File): Promise<void> {
     const form = new FormData()
     form.append('video', file)
     const response = await fetch(liveSourceUrl(), { method: 'POST', body: form })
     if (!response.ok) throw new Error(`Live source upload failed (${response.status})`)
+    running.value = true // backend auto-resumes the new source
   }
 
   return {
-    enabled,
+    enabled: readonly(enabled),
     connected,
-    index,
-    nFrames,
-    displayedScene,
     displayedBoxes,
     latestRgb: rgb.latest,
-    messagesPerSec: vocabulary.messagesPerSec,
+    running: readonly(running),
     commitDisplayedFrame,
+    pause,
+    resume,
+    nextDefault,
     toggle,
     setEnabled,
+    setBoxesShown,
     submitSource,
   }
 }

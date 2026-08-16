@@ -1,4 +1,4 @@
-# Concern: ask a VLM to describe one frame as structured JSON (object instances + attributes) | Non-concern: capturing frames (live loop), serving (app) | IO: (image data-uri) -> VLM response
+# Concern: VLM scene description + cheap follow-up questions on the same frame (conversation reuse) | Non-concern: capturing frames (live loop), serving (app) | IO: (image data-uri) -> answer + conversation
 import base64
 import os
 
@@ -27,26 +27,42 @@ def _downsample(image_data_uri: str, max_width: int) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
 
 
-def describe_scene(image_data_uri: str, timeout: float = 180.0) -> dict:
+def _ask(messages: list, timeout: float, max_tokens: int) -> str:
     payload = {
         "model": VLM_MODEL,
-        "messages": [
-            # Nemotron directive: skip the verbose chain-of-thought and answer directly
-            {"role": "system", "content": "detailed thinking off"},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _PROMPT},
-                    {"type": "image_url", "image_url": {"url": _downsample(image_data_uri, VLM_MAX_WIDTH)}},
-                ],
-            },
-        ],
-        "max_tokens": 256,
+        "messages": messages,
+        "max_tokens": max_tokens,
         "temperature": 0.2,
-        # disable the model's chain-of-thought so the answer lands in content, not reasoning
         "chat_template_kwargs": {"enable_thinking": False},
     }
     resp = requests.post(VLM_ENDPOINT, json=payload, timeout=timeout)
     resp.raise_for_status()
-    # return the raw VLM response verbatim — inspect it before committing to any field schema
-    return resp.json()
+    return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+
+
+def describe(image_data_uri: str, prompt: str | None = None, timeout: float = 180.0) -> tuple[str, list]:
+    # first turn: pays the image prefill once. Returns the full conversation so follow-ups can reuse it.
+    messages = [
+        {"role": "system", "content": "detailed thinking off"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt or _PROMPT},
+                {"type": "image_url", "image_url": {"url": _downsample(image_data_uri, VLM_MAX_WIDTH)}},
+            ],
+        },
+    ]
+    answer = _ask(messages, timeout, max_tokens=256)
+    messages.append({"role": "assistant", "content": answer})
+    return answer, messages
+
+
+def followup(messages: list, question: str, as_bool: bool = False, timeout: float = 120.0) -> tuple:
+    # reuses the prior conversation (system + image + Q1 + A1); vLLM prefix-caches the shared prefix so
+    # the expensive image prefill is NOT recomputed — only the new question + short answer are generated
+    ask = question + " Answer with only true or false." if as_bool else question
+    convo = messages + [{"role": "user", "content": ask}]
+    raw = _ask(convo, timeout, max_tokens=8 if as_bool else 256)
+    convo.append({"role": "assistant", "content": raw})
+    answer = "true" in raw.lower() if as_bool else raw
+    return answer, convo
