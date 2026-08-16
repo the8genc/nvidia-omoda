@@ -20,6 +20,8 @@ import { createTelegramLoop } from "./channels/telegram-loop.js";
 import { createModalityTransform } from "./channels/modality.js";
 import { createInferenceClient } from "./models/client.js";
 import { createKnowledgeStore, createNemotronEmbedder } from "./knowledge/store.js";
+import { createOrchestrator } from "./orchestrator.js";
+import { createUndoStore } from "./broker/undo.js";
 import { createCocoAdapter } from "./coco/adapter.js";
 import { createObservationJudge } from "./coco/judge.js";
 import { createCocoLive } from "./coco/live.js";
@@ -103,7 +105,14 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   // rule; the store fails those closed rather than accept one tap. The operator
   // allowlist is the source of truth for how many distinct deciders exist.
   const operatorCount = (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
-  const intents = createIntentStore({ singleOperator: operatorCount <= 1 });
+  // L0 is wired into the intake: a deferred ref so the store can be created
+  // before the orchestrator (which needs the registry and retrieval store).
+  let routeIntent = null;
+  const intents = createIntentStore({
+    singleOperator: operatorCount <= 1,
+    onPropose: (intent) => routeIntent?.(intent),
+  });
+  const undo = createUndoStore({ ledger });
 
   // The proxy layer's retrieval store (PRD 23.2). NeMo Retriever embeddings
   // when the on-box embed server answers; lexical otherwise, labeled as such.
@@ -117,6 +126,15 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     dir: process.env.OMODA_KNOWLEDGE ?? "var/knowledge", embedder, ledger,
   });
   knowledge.backend = embedder ? embedder.name : "lexical (embed server down)";
+
+  // L0 stands up here, now the registry and retrieval store exist. From this
+  // point every proposed intent, whatever door it came through, is routed to a
+  // declared capability by Nemotron and left awaiting consent.
+  const orchestrator = createOrchestrator({
+    intents, registry: index, ledger, knowledge,
+    localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
+  });
+  routeIntent = (intent) => orchestrator.onIntent(intent);
 
   const app = createApp({
     tokens, ledger, intents,
@@ -195,7 +213,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     const mediaTransform = createModalityTransform({
       transport, token: tgToken, inference: createInferenceClient({ timeoutMs: 180_000 }),
     });
-    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport, mediaTransform });
+    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport, mediaTransform, undo });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
   }
 
@@ -209,6 +227,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
+    line(`  L0      orchestrator live; proposed intents route to a capability automatically`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
     line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
@@ -230,7 +249,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus, orchestrator, undo,
     async close() {
       telegram?.stop();
       upstream?.stop();

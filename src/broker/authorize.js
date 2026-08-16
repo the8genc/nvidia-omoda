@@ -104,7 +104,9 @@ export async function authorize(action = {}, ctx = {}) {
     }
     const out = await execute(action);
     record({ tier, authority: "envelope", outcome: "executed", ofSeq: entry.seq });
-    return executed(tier, "envelope", { ledgerSeq: entry.seq, result: out, undoToken: action.inverse ? entry.hash.slice(0, 12) : null });
+    const undoToken = action.inverse ? entry.hash.slice(0, 12) : null;
+    if (undoToken) ctx.undo?.register({ token: undoToken, action, inverse: action.inverse, replay: ctx.executeInverse });
+    return executed(tier, "envelope", { ledgerSeq: entry.seq, result: out, undoToken });
   }
 
   // 4c. Consequential writes. The capability does not exist yet.
@@ -137,10 +139,13 @@ export async function authorize(action = {}, ctx = {}) {
       ofSeq: entry.seq,
       decidedBy: ctx.decision.decidedBy,
     });
+    const undoToken = action.inverse ? entry.hash.slice(0, 12) : null;
+    if (undoToken) ctx.undo?.register({ token: undoToken, action, inverse: action.inverse, replay: ctx.executeInverse });
     return executed(tier, `decision:${ctx.decision.decisionId}`, {
       ledgerSeq: entry.seq,
       result: out,
       deltaApplied: true,
+      undoToken,
     });
   } finally {
     // Guaranteed revert. A failed revert is an incident, not a log line.
