@@ -6,10 +6,12 @@ endpoints, plus the one thing only OMODA can provide: realtime agent activity.
 
 ## Endpoints
 
-All on the stream server (`ws://100.71.143.26:3111` on the box), all requiring
-`Authorization: Bearer <viewer token>` on the upgrade. The viewer token holds
-`intent:read` and nothing else: the demo app can watch the platform and cannot
-drive it. The token prints once at boot (`viewer ...`); ask and we hand it over.
+All on the stream server (`ws://100.71.143.26:3111` on the box). **No auth
+required on the output endpoints**: every consumer runs on the same hardware
+(decision 2026-08-16), the topics are read-only, and secrets are stripped before
+publish. Just connect. The ingest door (`/v1/stream`) still requires its token:
+watching is free, proposing work is not. A viewer token still prints at boot in
+case the outputs are ever locked again (`outputs.open` in boot).
 
 | Endpoint | One message per | Shape |
 |---|---|---|
