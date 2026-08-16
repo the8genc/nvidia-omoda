@@ -82,7 +82,7 @@ run_smoke() {
 
   #    The mock external service layer (city services the agents call). It binds
   #    the configured host (tailnet, so the dashboard can poll it), like the stream.
-  CHOST="${OMODA_CITY_HOST:-$(grep -s '^OMODA_CITY_HOST=' /etc/systemd/system/city-services.service | cut -d= -f2-)}"; CHOST="${CHOST:-127.0.0.1}"
+  CHOST="${OMODA_CITY_HOST:-$(grep -soE 'OMODA_CITY_HOST=[^ ]+' /etc/systemd/system/city-services.service | head -1 | cut -d= -f2-)}"; CHOST="${CHOST:-127.0.0.1}"
   c=$(code "http://$CHOST:3120/health")
   [ "$c" = 200 ] && pass "city-services mock healthy on :3120 ($CHOST)" || fail "city-services :3120 on $CHOST -> $c"
 
