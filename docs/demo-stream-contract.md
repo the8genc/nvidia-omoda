@@ -17,8 +17,9 @@ case the outputs are ever locked again (`outputs.open` in boot).
 |---|---|---|
 | `/v1/out/frames` | video frame | `{topic:"frame", at, seq, index, rgb}` where `rgb` is the JPEG data URI relayed verbatim from COCO |
 | `/v1/out/observations` | COCO description | `{topic:"observation", at, source, description, prompt, followup, danger_signal, verdict, intentId?, incidentType?, severity?, signals?}` |
-| `/v1/out/agents` | agent action | `{topic:"agent", at, name, level, action, instruction, outcome, tier, seq}` — a compact display projection (see below) |
+| `/v1/out/agents` | agent action | `{topic:"agent", at, agent, action, seq}` — a thin ticker: agent name and the action it is taking (see below) |
 | `/v1/out/agentic` | agentic event | `{topic:"agentic", at, event, correlationId, actor, target?, intentId?, detail}` — the fine-grained narration stream, catalog below |
+| `/v1/out/audit` | audit record | the agentic audit trail, eight fields per engagement; see `docs/audit-stream.md` |
 
 ## What the observation verdicts mean
 
@@ -29,53 +30,36 @@ case the outputs are ever locked again (`outputs.open` in boot).
 - `candidate-skipped-busy`: a candidate arrived while a judgment was in flight;
   recorded and skipped so OMODA never queues behind COCO's captioning.
 
-## What the agent stream shows
-
-Every action the platform records, as it lands: `judge.incident`,
-`judge.resolve`, broker admits and refusals (including `prohibited`),
-`telegram.decide`, `ui.agent.deploy`, gateway calls, `coco.describe` questions.
-The demo app renders this as the live "what are the agents doing" panel; the
-`tier` field (safe, contained, consequential, prohibited) is the color coding.
-
 ## The agent-action stream (`/v1/out/agents`)
 
-Human-prose, for display. Each event leads with a `headline` sentence describing
-what is happening in the flow right now; the structured fields are there for the
-UI to style, but the sentence is the point. Every hop down the org chart is a
-separate event: OMODA (L0) handing to a domain expert (L1), an L1 to a worker
-(L2), a worker to the tool specialist (L3).
+A thin activity ticker: two fields per event, the **agent name** and the
+**action** it is taking, plus `seq` for ordering. It is a glanceable "what are the
+agents doing right now" feed. Every hop down the org chart is one event: OMODA
+(L0) taking an incident, a domain expert (L1) delegating to a worker (L2), a
+worker escalating to the tool specialist (L3), and each ledgered action.
 
-Two `kind`s:
-
-**`handoff`** — one agent relying on another:
 ```
-{ topic:"agent", at, kind:"handoff", intentId,
-  headline:"OMODA handed off to the fire domain expert (L1) to take the fire and coordinate the response.",
-  agent:   { name:"l0", level:0, role:"orchestrator" },
-  relies_on:[{ name:"fire", level:1, role:"domain expert" }],
-  doing:"take the fire and coordinate the response",
-  dangerous:false }
-```
-A dangerous hop (the 911 calls) sets `dangerous:true` and the headline says it is
-held for human approval.
-
-**`action`** — one agent doing a ledgered thing:
-```
-{ topic:"agent", at, kind:"action", seq, intentId,
-  headline:"The emergency dispatch tool specialist (L3) needs human approval before it can dispatch.unit.request; the capability does not exist until then.",
-  agent:{ name:"emergency-dispatch", level:3, role:"tool specialist" },
-  action:"create dispatch.unit.request", instruction:"…", outcome:"escalated", tier:"consequential" }
+{ topic:"agent", at, agent:"OMODA",              action:"traffic-accident -> accident-agent",           seq:3 }
+{ topic:"agent", at, agent:"ambulatory",         action:"request an ambulance (awaiting approval)",     seq:null }
+{ topic:"agent", at, agent:"emergency dispatch", action:"ran dispatch.unit.request",                     seq:8 }
+{ topic:"agent", at, agent:"procurement",        action:"authorize the crane callout (public spend) (awaiting approval)", seq:null }
 ```
 
-`level` is the org-chart rank (`0`–`3`), `"operator"` for the human, `"input"`
-for a camera/See feed. L0 is named **OMODA** in prose, since that is the
-interface. The full hash-chained record stays on disk and on `GET /v1/ledger`,
-one `seq` away; this stream is for the story, the ledger is for the proof.
+`agent` is the plain name (L0 is **OMODA**, the human is **the operator**). A
+dangerous hop reads `… (awaiting approval)`. `seq`, when present, cross-references
+the full record on `/v1/ledger` and `/ui/audit`.
+
+**Everything else moved to the audit trail.** Authority (who approved), intent
+(why), tier (L0-L3), the concrete target call, and the hash chain are no longer on
+this stream; they are on `/v1/out/audit` (condensed, eight fields) and `/ui/audit`
+(the full hash-chained record, admin only). See `docs/audit-stream.md`. This
+stream is the ticker; the audit trail is the record.
 
 ## The agentic narration stream (`/v1/out/agentic`)
 
-Where `/v1/out/agents` is the audit (durable, terse), this stream is the story:
-what the agents are deciding, saying to each other, and touching, as it happens.
+Where `/v1/out/agents` is the thin ticker and `/v1/out/audit` is the durable
+record, this stream is the story: what the agents are deciding, saying to each
+other, and touching, as it happens.
 The `event` field is a fixed catalog; new instrumentation only ADDS events, the
 envelope never changes shape, so the dashboard can build against this today:
 

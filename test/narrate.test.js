@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describeAgent, narrateHandoff, narrateEntry, narrateResponse } from "../src/telemetry/narrate.js";
+import { describeAgent, narrateHandoff, narrateEntry, narrateResponse, handoffActivity } from "../src/telemetry/narrate.js";
 import { skillLevelMap, levelFor } from "../src/telemetry/display.js";
 import { loadSkills } from "../src/skills/load.js";
 
@@ -49,23 +49,27 @@ test("the fire flow routes through the fire department and shared ambulatory", (
   assert.match(h, /handed off to the ambulatory worker \(L2\)/);
 });
 
-test("narrateEntry turns broker outcomes into human sentences", () => {
-  const esc = narrateEntry({ agent: "emergency-dispatch", tool: "dispatch.unit.request", verb: "create", outcome: "escalated", tier: "consequential" }, levels);
-  assert.match(esc.headline, /needs human approval before it can dispatch.unit.request/);
-  const done = narrateEntry({ agent: "emergency-dispatch", tool: "dispatch.unit.request", outcome: "executed" }, levels);
-  assert.match(done.headline, /completed dispatch.unit.request/);
-  const prohibited = narrateEntry({ agent: "operator", tool: "dispatch.mass_broadcast", outcome: "refused", reason: "prohibited: no-mass-broadcast", tier: "prohibited" }, levels);
-  assert.match(prohibited.headline, /prohibited, and was blocked/);
-  const approve = narrateEntry({ agent: "operator:arif", tool: "telegram.decide", reason: "approve" }, levels);
-  assert.match(approve.headline, /operator approved/);
+test("narrateEntry is a thin ticker event: just the agent name and the action", () => {
+  // exactly two display fields (plus seq for ordering), nothing else
+  const done = narrateEntry({ seq: 9, agent: "emergency-dispatch", tool: "dispatch.unit.request", outcome: "executed" });
+  assert.deepEqual(Object.keys(done).sort(), ["action", "agent", "seq"]);
+  assert.equal(done.agent, "emergency dispatch");
+  assert.equal(done.action, "ran dispatch.unit.request");
+  assert.equal(done.seq, 9);
+  assert.equal(done.headline, undefined, "no prose headline on the wire anymore");
+  assert.equal(done.tier, undefined, "no tier; that detail lives in the audit trail");
+
+  // L0 is named OMODA; outcomes shape the action verb
+  assert.equal(narrateEntry({ agent: "l0", tool: "l0.review", outcome: "routed-to-l1" }).agent, "OMODA");
+  assert.equal(narrateEntry({ agent: "emergency-dispatch", tool: "dispatch.unit.request", outcome: "escalated" }).action, "awaiting approval to run dispatch.unit.request");
+  assert.equal(narrateEntry({ agent: "operator", tool: "dispatch.mass_broadcast", outcome: "refused", reason: "prohibited: no-mass-broadcast", tier: "prohibited" }).action, "blocked from dispatch.mass_broadcast");
+  assert.equal(narrateEntry({ agent: "operator:arif", tool: "telegram.decide", reason: "approve" }).agent, "the operator");
 });
 
-test("the event keeps structured fields alongside the headline for the UI", () => {
-  const e = narrateEntry({ seq: 9, agent: "roadside", tool: "roadside.workorder.create", verb: "create", outcome: "executed", reason: "open a tow request" }, levels);
-  assert.equal(e.agent.name, "roadside");
-  assert.equal(e.agent.level, 2);
-  assert.equal(e.action, "create roadside.workorder.create");
-  assert.equal(e.instruction, "open a tow request");
-  assert.equal(e.seq, 9);
-  assert.ok(e.headline.length > 0);
+test("a handoff on the ticker is the acting agent and the work it starts", () => {
+  const hop = narrateHandoff({ from: "ambulatory", to: "emergency-dispatch", doing: "request an ambulance", dangerous: true }, levels);
+  const e = handoffActivity(hop);
+  assert.deepEqual(Object.keys(e).sort(), ["action", "agent", "seq"]);
+  assert.equal(e.agent, "ambulatory");
+  assert.equal(e.action, "request an ambulance (awaiting approval)");
 });

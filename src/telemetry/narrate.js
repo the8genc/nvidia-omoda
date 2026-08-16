@@ -1,8 +1,12 @@
-// Human-prose narration for the agent-action stream (/v1/out/agents).
+// The agent-action stream (/v1/out/agents): a simple live activity ticker.
 //
-// The dashboard shows this to a person, so each event leads with a sentence:
-// who is acting, what they are doing right now, and who they are relying on.
-// The structured fields stay for the UI to style, but the headline is the point.
+// It shows two things per event, and only two: the agent name, and the action it
+// is taking. The full story, who authorised it, why, which incident, the hash
+// chain, now lives in the audit trail (/v1/out/audit and /ui/audit), so this
+// stream is deliberately thin: a glanceable feed of who is doing what.
+//
+// describeAgent, narrateHandoff and narrateResponse remain because the audit
+// projection and the response choreography still use them.
 
 import { levelFor } from "./display.js";
 import { planFor } from "../domain/response-plan.js";
@@ -12,6 +16,30 @@ const ROLE = Object.freeze({ 0: "orchestrator", 1: "domain expert", 2: "worker",
 /** Pretty, human name for an agent: "emergency-dispatch" -> "emergency dispatch". */
 function pretty(name) {
   return String(name ?? "agent").replace(/^(coco|telegram|stream|see):/, "").replace(/[-_]/g, " ");
+}
+
+/** The bare agent name the ticker shows: "OMODA" for L0, "the operator", else the pretty name. */
+function agentName(name) {
+  if (name === "l0") return "OMODA";
+  if (String(name).startsWith("operator")) return "the operator";
+  return pretty(name).replace(/:/g, " ");
+}
+
+/** The concise action phrase: what the agent is doing, keyed off the outcome. */
+function actionPhrase(entry) {
+  const tool = entry.tool ?? entry.kind ?? "an action";
+  const reason = entry.reason ?? null;
+  const o = entry.outcome;
+  if (entry.tier === "prohibited" || (o === "refused" && /prohibited|self-protection|mass-broadcast/.test(String(reason)))) return `blocked from ${tool}`;
+  if (o === "escalated" || entry.consentNeeded) return `awaiting approval to run ${tool}`;
+  if (o === "refused") return `refused ${tool}`;
+  if (o === "executed") return `ran ${tool}`;
+  if (o === "admitted") return `running ${tool}`;
+  if (entry.tool === "telegram.decide") return reason === "approve" ? "approved the pending action" : "decided on the pending action";
+  if (entry.tool === "telegram.undo" || o === "undone") return `reversed ${tool}`;
+  if (entry.kind === "coco" || entry.kind === "coco-live") return reason || `handled ${tool}`;
+  if (reason) return reason;
+  return tool;
 }
 
 /** {name, level, role} plus a display phrase like "the accident domain expert (L1)". */
@@ -56,49 +84,21 @@ export function narrateHandoff({ from, to, doing, dangerous = false, intentId = 
 }
 
 /**
- * A ledgered action, as a sentence. Covers the broker outcomes, consent,
- * prohibited refusals, undo, and the perception/describe reads.
+ * One ledgered action -> a ticker event: just the agent name and the action.
+ * `seq` rides along for ordering and to cross-reference the full audit record.
  */
-export function narrateEntry(entry, levelMap) {
-  const a = describeAgent(entry.agent, levelMap);
-  const tool = entry.tool ?? "an action";
-  const reason = entry.reason ?? null;
-  const tier = entry.tier ?? entry.kind ?? null;
+export function narrateEntry(entry) {
+  return { seq: entry.seq ?? null, agent: agentName(entry.agent), action: actionPhrase(entry) };
+}
 
-  let headline;
-  if (tier === "prohibited" || entry.outcome === "refused" && /prohibited|self-protection|mass-broadcast/.test(String(reason))) {
-    headline = `${cap(a.phrase)} attempted ${tool}, which is prohibited, and was blocked.`;
-  } else if (entry.outcome === "escalated" || entry.consentNeeded) {
-    headline = `${cap(a.phrase)} needs human approval before it can ${tool}; the capability does not exist until then.`;
-  } else if (entry.outcome === "refused") {
-    headline = `${cap(a.phrase)} was refused: ${reason ?? "not permitted"}.`;
-  } else if (entry.outcome === "executed") {
-    headline = `${cap(a.phrase)} completed ${tool}.`;
-  } else if (entry.outcome === "admitted") {
-    headline = `${cap(a.phrase)} is carrying out ${tool}.`;
-  } else if (entry.tool === "telegram.decide") {
-    headline = `The operator ${reason === "approve" ? "approved" : "decided on"} the pending action.`;
-  } else if (entry.tool === "telegram.undo" || entry.outcome === "undone") {
-    headline = `${cap(a.phrase)} reversed ${tool}.`;
-  } else if (entry.kind === "coco-live" || entry.kind === "coco") {
-    headline = `${cap(a.phrase)} ${reason ? reason : `handled ${tool}`}.`;
-  } else if (reason) {
-    headline = `${cap(a.phrase)} ${reason}.`;
-  } else {
-    headline = `${cap(a.phrase)} performed ${tool}.`;
-  }
-
-  return {
-    kind: "action",
-    headline,
-    seq: entry.seq,
-    agent: { name: a.name, level: a.level, role: a.role },
-    action: `${entry.verb ? entry.verb + " " : ""}${entry.tool ?? "-"}`.trim(),
-    instruction: reason,
-    outcome: entry.outcome ?? null,
-    tier,
-    intentId: entry.intentId ?? null,
-  };
+/**
+ * One L1 -> L3 handoff -> a ticker event: the acting agent and the work it is
+ * initiating. Same two-field shape as narrateEntry, so the stream is uniform.
+ */
+export function handoffActivity(ev) {
+  const a = ev.agent ?? {};
+  const action = ev.dangerous ? `${ev.doing} (awaiting approval)` : ev.doing;
+  return { seq: null, agent: agentName(a.name), action };
 }
 
 /**

@@ -15,7 +15,7 @@ import { planAction, PlanRefused } from "./models/plan.js";
 import { consentKind } from "./domain/taxonomy.js";
 import { telemetry } from "./telemetry/agentic.js";
 import { candidateSignals } from "./coco/judge.js";
-import { narrateResponse } from "./telemetry/narrate.js";
+import { narrateResponse, handoffActivity } from "./telemetry/narrate.js";
 import { handoffToAudit } from "./telemetry/audit.js";
 
 // L0's routing table: which L1 domain agent owns which incident type. This is
@@ -158,8 +158,8 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
       // same handoffs feed the audit stream as agent-to-agent engagement events.
       if (verdict.verdict === "incident" && bus) {
         for (const ev of narrateResponse({ incidentType: verdict.incidentType, l1, intentId: verdict.intentId }, levelMap)) {
-          bus.publish("agent", ev);
-          bus.publish("audit", handoffToAudit(ev, levelMap));
+          bus.publish("agent", handoffActivity(ev));   // thin ticker: name + action
+          bus.publish("audit", handoffToAudit(ev, levelMap)); // full engagement to the audit trail
         }
       }
       return { ...verdict, reviewed: true, routedToL1: l1, signals, inferenceUsed: true };
