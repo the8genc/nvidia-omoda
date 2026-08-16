@@ -127,11 +127,14 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   });
   knowledge.backend = embedder ? embedder.name : "lexical (embed server down)";
 
-  // L0 stands up here, now the registry and retrieval store exist. From this
-  // point every proposed intent, whatever door it came through, is routed to a
-  // declared capability by Nemotron and left awaiting consent.
+  // L0 stands up here, now the registry and retrieval store exist. It owns two
+  // things: reviewing every frame description off the stream (deterministic
+  // first, inference only when signals fire) and routing to an L1 domain agent,
+  // and routing every proposed intent to a declared capability awaiting consent.
+  // The judge is L0's detection engine, created once and shared.
+  const judge = createObservationJudge({ intents, ledger });
   const orchestrator = createOrchestrator({
-    intents, registry: index, ledger, knowledge,
+    intents, registry: index, ledger, knowledge, judge,
     localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
   });
   routeIntent = (intent) => orchestrator.onIntent(intent);
@@ -166,9 +169,11 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     // and the Observation Judge take the frames (PRD section 24).
     let handleRaw = null;
     if ((process.env.OMODA_STREAM_FORMAT ?? "").toLowerCase() === "coco") {
-      const judge = createObservationJudge({ intents, ledger });
-      coco = createCocoAdapter({ judge, ledger });
-      coco.judge = judge;
+      // L0 is the frame reviewer: every COCO observation goes through the
+      // orchestrator (deterministic first, inference when signals fire), which
+      // routes to an L1 domain agent.
+      coco = createCocoAdapter({ judge: orchestrator, ledger });
+      coco.judge = orchestrator;
       handleRaw = coco.handleMessage;
     }
     upstream = createUpstreamDialer({
@@ -184,9 +189,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const cocoBase = process.env.OMODA_COCO_BASE;
   if (cocoBase) {
     const { WebSocket } = await import("ws");
-    const liveJudge = coco?.judge ?? createObservationJudge({ intents, ledger });
     cocoLive = createCocoLive({
-      base: cocoBase, judge: liveJudge, bus, ledger, WebSocketImpl: WebSocket,
+      base: cocoBase, judge: orchestrator, bus, ledger, WebSocketImpl: WebSocket,
       onLog: (m) => console.log(`  coco    ${m}`),
     });
     cocoLive.start();
@@ -227,7 +231,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
-    line(`  L0      orchestrator live; proposed intents route to a capability automatically`);
+    line(`  L0      live: reviews every frame (deterministic + inference), routes to an L1 agent, and routes intents to capabilities`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
     line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
