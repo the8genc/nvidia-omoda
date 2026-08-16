@@ -14,7 +14,7 @@ import {
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
-import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage, KnowledgePage } from "../web/ui.js";
+import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage, KnowledgePage, TriggersPage } from "../web/ui.js";
 import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { safeParseManifest } from "../schema/manifest.js";
@@ -74,6 +74,8 @@ export function createApp({
   tokens, ledger, intents, nonces, limiter, skills = [], uiOperator = null,
   skillsDir = "skills",
   knowledge = null,
+  triggers = null,
+  l1Agents = [],
   // How "apply now" takes effect. The default exits non-zero after the response
   // has flushed, so systemd (Restart=on-failure) brings the service back with
   // the new skill loaded. Injected so tests never kill their own process.
@@ -222,6 +224,30 @@ export function createApp({
         outcome: out.ok ? "recorded" : "refused", reason: out.ok ? form.get("verdict") : out.reason,
       });
       res.writeHead(303, { location: "/ui/intents" });
+      return res.end();
+    }
+
+    if (path === "/ui/triggers" && method === "GET") {
+      if (!triggers) return html(503, "<p>trigger store not configured</p>");
+      return html(200, render(TriggersPage({ csrf, rules: triggers.list(), l1Agents })));
+    }
+    if (path === "/ui/triggers" && method === "POST") {
+      if (!triggers) return html(503, "<p>trigger store not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const out = triggers.add({
+        phrases: form.get("phrases"), incidentType: form.get("incidentType"),
+        l1: form.get("l1"), action: form.get("action"),
+      });
+      if (!out.ok) return html(422, render(TriggersPage({ csrf, rules: triggers.list(), l1Agents, error: out.reason })));
+      return html(200, render(TriggersPage({ csrf, rules: triggers.list(), l1Agents, added: (out.rule.phrases[0] ?? "") })));
+    }
+    if (path === "/ui/triggers/delete" && method === "POST") {
+      if (!triggers) return html(503, "<p>trigger store not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      triggers.remove(form.get("id"));
+      res.writeHead(303, { location: "/ui/triggers" });
       return res.end();
     }
 
