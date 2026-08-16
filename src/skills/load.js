@@ -12,28 +12,69 @@ import { compile } from "../policy/compile.js";
 export function loadSkillFiles(dir = "skills") {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .map((name) => join(dir, name, "omoda.skill.yaml"))
-    .filter((p) => existsSync(p) && statSync(p).isFile())
+    .map((name) => {
+      // One Markdown file per skill is the v4 shape (PRD section 23.4): YAML
+      // front matter for the machine, prose body for the agent. The YAML sidecar
+      // keeps working during migration. If both exist, the md wins, loudly.
+      const md = join(dir, name, "omoda.skill.md");
+      const yaml = join(dir, name, "omoda.skill.yaml");
+      if (existsSync(md) && statSync(md).isFile()) return md;
+      if (existsSync(yaml) && statSync(yaml).isFile()) return yaml;
+      return null;
+    })
+    .filter(Boolean)
     .sort();
+}
+
+/** Split an omoda.skill.md into { manifest front matter, instructions body }. */
+export function parseSkillMarkdown(text) {
+  const m = String(text).match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) throw new Error("omoda.skill.md must start with a YAML front matter block");
+  return { manifest: parse(m[1]), instructions: m[2].trim() || null };
+}
+
+/**
+ * What an agent at this level is HANDED. The level does not describe behaviour,
+ * it determines injection: an L2 has no inference client to be talked into
+ * calling, and an L3 is never given the task context it could leak.
+ */
+export function grantsFor(level) {
+  return Object.freeze({
+    level,
+    inference: level <= 1,
+    retrieval: level === 1,
+    // "consent-none": only capabilities the taxonomy marks unattended.
+    // "all-declared": every declared tool, each still gated by the Broker.
+    tools: level <= 1 ? "none" : level === 2 ? "consent-none" : "all-declared",
+    taskContext: level <= 2,
+  });
 }
 
 /**
  * @returns {{skills:Array, errors:Array}} compiled skills plus any that failed.
  * A malformed manifest is reported, never silently skipped: a skill that does
- * not compile must not appear to be enabled.
+ * not compile must not appear to be enabled. An over-leveled manifest fails
+ * here too, for the same reason (schema superRefine).
  */
 export function loadSkills(dir = "skills") {
   const skills = [];
   const errors = [];
   for (const path of loadSkillFiles(dir)) {
     try {
-      const manifest = parse(readFileSync(path, "utf8"));
+      const raw = readFileSync(path, "utf8");
+      const { manifest, instructions } = path.endsWith(".md")
+        ? parseSkillMarkdown(raw)
+        : { manifest: parse(raw), instructions: null };
       const compiled = compile(manifest);
+      const level = compiled.manifest?.level ?? manifest.level ?? 2;
       skills.push({
         path,
         skill: manifest.skill,
         agent: manifest.agent,
         description: manifest.description ?? null,
+        level,
+        grants: grantsFor(level),
+        instructions,
         manifest,
         ...compiled,
       });

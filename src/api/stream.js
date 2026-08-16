@@ -152,6 +152,75 @@ export function createStreamIngest({
   return { accept, ingest, release, get inFlight() { return inFlight; }, OUTCOME };
 }
 
+/**
+ * OUTBOUND client mode: dial a stream that is already pushing JSON (PRD 23.1).
+ *
+ * Two things keep this consistent with the inbound story rather than a second,
+ * weaker door:
+ *
+ * 1. It runs in the HOST service only, next to the inbound listener. The
+ *    original objection to outbound WebSockets was about SANDBOX egress, which
+ *    cannot be L7-inspected; that objection stands and this does not touch it.
+ * 2. Frames from a dialed stream are wrapped into the same signed envelope and
+ *    fed through the SAME ingest: schema, dedupe, debounce, shed, and the
+ *    propose-only identity all apply identically. We sign with our own dial
+ *    identity because the signature attests "this process received this frame",
+ *    not "the remote is trusted"; a dialed stream is still an untrusted input.
+ *
+ * A frame may be a bare payload or a full envelope. A remote-supplied event_id
+ * is kept so retransmits dedupe; everything else about the remote is ignored.
+ */
+export function createUpstreamDialer({
+  url, ingest, identity, WebSocketImpl,
+  reconnectMs = 5000, maxReconnectMs = 60_000,
+  now = () => Date.now(), onResult = null, onLog = () => {},
+}) {
+  if (!url) throw new Error("upstream dialer requires a url");
+  if (!identity?.secret) throw new Error("upstream dialer requires a dial identity with a secret");
+  let ws = null, running = false, backoff = reconnectMs, counter = 0, timer = null;
+
+  function wrap(raw) {
+    let frame;
+    try { frame = JSON.parse(String(raw)); } catch { return null; }
+    if (frame === null || typeof frame !== "object") return null;
+    const payload = frame.payload && typeof frame.payload === "object" ? frame.payload : frame;
+    const ts = Number.isInteger(frame.ts) ? frame.ts : Math.floor(now() / 1000);
+    const eventId = typeof frame.event_id === "string" && frame.event_id
+      ? frame.event_id
+      : `dial-${createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16)}-${counter++}`;
+    return JSON.stringify({ event_id: eventId, ts, sig: signEvent(identity.secret, eventId, ts, payload), payload });
+  }
+
+  function handleMessage(raw) {
+    const wrapped = wrap(raw);
+    const result = wrapped
+      ? ingest.ingest(wrapped, identity)
+      : { outcome: OUTCOME.REJECTED, reason: "frame is not a JSON object" };
+    onResult?.(result);
+    return result;
+  }
+
+  function connect() {
+    ws = new WebSocketImpl(url);
+    ws.on("open", () => { backoff = reconnectMs; onLog(`upstream connected: ${url}`); });
+    ws.on("message", (d) => handleMessage(typeof d === "string" ? d : d.toString("utf8")));
+    ws.on("error", () => { /* surfaced through close */ });
+    ws.on("close", () => {
+      if (!running) return;
+      onLog(`upstream closed; redialing in ${Math.round(backoff / 1000)}s`);
+      timer = setTimeout(() => { if (running) connect(); }, backoff);
+      backoff = Math.min(backoff * 2, maxReconnectMs);
+    });
+  }
+
+  return {
+    handleMessage, // exposed so tests drive frames without a socket
+    start() { running = true; connect(); },
+    stop() { running = false; clearTimeout(timer); try { ws?.close(); } catch { /* gone */ } },
+    get running() { return running; },
+  };
+}
+
 /** Wire the ingest to a real WebSocket server on an existing http server. */
 export async function attachStreamServer({ server, ingest, path = "/v1/stream" }) {
   const { WebSocketServer } = await import("ws");

@@ -32,6 +32,14 @@ const DecisionBody = z.object({
   action_id: z.string().min(1),
 }).strict();
 
+// PUT: an update to something previously posted. Strict, so a body carrying
+// decisions (or anything else) is a schema error before it is a semantic one.
+const UpdateBody = z.object({
+  requested_outcome: z.string().min(1).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  evidence: z.record(z.unknown()).optional(),
+}).strict();
+
 const json = (res, status, obj) => {
   const body = JSON.stringify(obj);
   res.writeHead(status, {
@@ -112,7 +120,7 @@ export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [
 
     let raw = "";
     try {
-      if (method === "POST") raw = await readBody(req);
+      if (method === "POST" || method === "PUT") raw = await readBody(req);
     } catch (err) {
       return json(res, err.status ?? 400, { error: err.code ?? "bad_body" });
     }
@@ -120,6 +128,9 @@ export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [
     const scopeFor = () => {
       if (path === "/v1/intents" && method === "POST") return SCOPES.PROPOSE;
       if (path.startsWith("/v1/intents/") && path.endsWith("/decisions")) return SCOPES.DECIDE;
+      // An update to a previously posted engagement is proposer-side work, and
+      // the store additionally binds it to the exact proposing identity.
+      if (path.startsWith("/v1/intents/") && method === "PUT") return SCOPES.PROPOSE;
       if (path.startsWith("/v1/intents/")) return SCOPES.READ;
       if (path === "/v1/ledger") return SCOPES.LEDGER;
       if (path === "/v1/halt") return SCOPES.HALT;
@@ -136,7 +147,7 @@ export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [
         rawBody: raw,
         requiredScope: required,
         tokens, nonces, limiter,
-        requireSignature: method === "POST",
+        requireSignature: method === "POST" || method === "PUT",
       }));
     } catch (err) {
       if (err instanceof AuthError) return json(res, err.status, { error: err.code, message: err.message });
@@ -145,7 +156,7 @@ export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [
 
     // Non-propose POSTs have no idempotency semantics, so replay protection
     // applies immediately.
-    if (method === "POST" && path !== "/v1/intents") {
+    if ((method === "POST" && path !== "/v1/intents") || method === "PUT") {
       try { checkReplay({ signature, nonces }); }
       catch (err) { return json(res, err.status, { error: err.code, message: err.message }); }
     }
@@ -178,6 +189,27 @@ export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [
 
       // 202, never 200. Proposing is not doing.
       return json(res, 202, { intent_id: intent.id, state: intent.state, duplicate });
+    }
+
+    // PUT /v1/intents/{id}: an update to something previously posted (PRD 23.1)
+    const putMatch = path.match(/^\/v1\/intents\/([^/]+)$/);
+    if (putMatch && method === "PUT") {
+      let body;
+      try { body = UpdateBody.parse(JSON.parse(raw)); }
+      catch (err) { return json(res, 422, { error: "schema", message: String(err.message).slice(0, 400) }); }
+
+      const out = intents.update({ intentId: putMatch[1], body, caller });
+      try {
+        ledger.append({
+          kind: "api", agent: caller.id, tool: "intents.update", verb: "update",
+          outcome: out.ok ? "updated" : "refused", reason: out.ok ? undefined : out.reason,
+          intentId: putMatch[1],
+        });
+      } catch {
+        return json(res, 503, { error: "ledger_unavailable", message: "refusing to serve unlogged" });
+      }
+      if (!out.ok) return json(res, out.status, { error: "update_refused", message: out.reason });
+      return json(res, 200, { intent_id: out.intent.id, state: out.intent.state, updates: out.intent.updates.length });
     }
 
     // POST /v1/intents/{id}/decisions

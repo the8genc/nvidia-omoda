@@ -80,6 +80,39 @@ export function createIntentStore({ singleOperator = false } = {}) {
     get(id) { return byId.get(id) ?? null; },
     all() { return [...byId.values()]; },
 
+    /**
+     * PUT semantics: an update to something previously posted (PRD section 23.1).
+     * Updates never touch decisions, never reopen a settled intent, and only the
+     * identity that proposed an engagement may update it; anyone else describing
+     * "the same" engagement is a different engagement.
+     */
+    update({ intentId, body, caller }) {
+      const intent = byId.get(intentId);
+      if (!intent) return { ok: false, status: 404, reason: "unknown intent" };
+      if (caller.id !== intent.proposedBy) {
+        return { ok: false, status: 403, reason: "only the proposer may update its own engagement" };
+      }
+      if (intent.state === INTENT_STATE.EXECUTED || intent.state === INTENT_STATE.DENIED || intent.state === INTENT_STATE.REFUSED) {
+        return { ok: false, status: 409, reason: `intent is ${intent.state}; an update cannot reopen a settled engagement` };
+      }
+      if (body.decisions !== undefined || body.decision !== undefined || body.verdict !== undefined) {
+        return { ok: false, status: 422, reason: "an update cannot carry decisions" };
+      }
+
+      const patch = {};
+      if (body.requested_outcome !== undefined) patch.requestedOutcome = body.requested_outcome;
+      if (body.confidence !== undefined) patch.confidence = body.confidence;
+      if (body.evidence !== undefined) patch.evidence = { ...intent.evidence, ...body.evidence };
+      if (Object.keys(patch).length === 0) {
+        return { ok: false, status: 422, reason: "an update must change something" };
+      }
+
+      intent.updates = intent.updates ?? [];
+      intent.updates.push({ at: new Date().toISOString(), by: caller.id, patch });
+      Object.assign(intent, patch);
+      return { ok: true, intent };
+    },
+
     /** Register a pending consequential action awaiting consent. */
     awaitConsent(intentId, action) {
       const intent = byId.get(intentId);

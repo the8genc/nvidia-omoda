@@ -11,7 +11,7 @@ import { createApp } from "./api/server.js";
 import { createTokenStore, createNonceCache, createRateLimiter, assertBindable, SCOPES } from "./api/auth.js";
 import { createIntentStore } from "./api/intents.js";
 import { createLedger } from "./ledger/ledger.js";
-import { createStreamIngest, attachStreamServer } from "./api/stream.js";
+import { createStreamIngest, attachStreamServer, createUpstreamDialer } from "./api/stream.js";
 import { createSimulatedPolicy } from "./policy/envelope.js";
 import { createOpenShellPolicy } from "./policy/openshell.js";
 import { fragmentToYaml } from "./policy/compile.js";
@@ -100,6 +100,21 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   await attachStreamServer({ server: streamServer, ingest });
   await new Promise((r) => streamServer.listen(streamPort, host, r));
 
+  // Outbound client mode (PRD 23.1): dial a stream that is already pushing
+  // JSON. Host service only; frames enter the same ingest path as inbound,
+  // under a fresh propose-only identity.
+  let upstream = null;
+  const dialUrl = process.env.OMODA_STREAM_CONNECT;
+  if (dialUrl) {
+    const dialIdentity = tokens.issue({ id: `stream:dial`, scopes: [SCOPES.PROPOSE] });
+    const { WebSocket } = await import("ws");
+    upstream = createUpstreamDialer({
+      url: dialUrl, ingest, identity: dialIdentity, WebSocketImpl: WebSocket,
+      onLog: (m) => console.log(`  stream  ${m}`),
+    });
+    upstream.start();
+  }
+
   // ── Telegram, only if configured, and only if it can fail closed ──────
   let telegram = null;
   let telegramClient = null;
@@ -125,7 +140,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("OMODA is up.");
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
-    line(`  stream  ws://${host}:${streamPort}/v1/stream`);
+    line(`  stream  ws://${host}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}` : ""}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}]` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
@@ -147,9 +162,10 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient, upstream,
     async close() {
       telegram?.stop();
+      upstream?.stop();
       await new Promise((r) => app.server.close(r));
       await new Promise((r) => streamServer.close(r));
     } };
