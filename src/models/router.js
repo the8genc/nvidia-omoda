@@ -15,7 +15,11 @@ export const MODEL = Object.freeze({
 
 export const ENDPOINT = Object.freeze({
   HOSTED: "https://integrate.api.nvidia.com/v1/chat/completions",
-  LOCAL: "http://host.openshell.internal:8000/v1/chat/completions",
+  // From inside the OpenShell sandbox the local vLLM is host.openshell.internal;
+  // when OMODA runs as a host systemd unit that name does not resolve, so the
+  // address is overridable. Set OMODA_LOCAL_INFERENCE=http://localhost:8000/v1/chat/completions
+  // for a host deployment.
+  LOCAL: process.env.OMODA_LOCAL_INFERENCE ?? "http://host.openshell.internal:8000/v1/chat/completions",
 });
 
 export const TASK = Object.freeze({

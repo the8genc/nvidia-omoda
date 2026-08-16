@@ -143,29 +143,43 @@ export function createObservationJudge({
     try { ledger?.append({ kind: "judge", agent: "omoda:judge", ...entry }); } catch { /* best effort */ }
   };
 
+  // Degraded verdict: strong deterministic signals still escalate (marked
+  // unjudged) rather than silently dropping a possible accident; otherwise
+  // nominal. Used when the model is unavailable OR the call fails at runtime.
+  function degradedVerdict(signals, why) {
+    const strong = signals.includes("interaction:contact_visible") || signals.includes("changes:new_vehicle_contact");
+    return strong
+      ? { is_incident: true, incident_type: "traffic-accident", severity: "medium", reason: `${why}; deterministic signals: ${signals.join(", ")}`, cleared: false, degraded: true }
+      : { is_incident: false, incident_type: "none", severity: "none", reason: `${why}; signals inconclusive`, cleared: false, degraded: true };
+  }
+
   async function judgeCandidate(obs, context, signals) {
     // The same zero-egress rule as every perception path: local model or refusal.
     const decision = route({ task: TASK.CLASSIFY, payload: "", localAvailable: localAvailable() });
     if (!decision.model) {
       record({ tool: "judge.infer", verb: "read", outcome: "degraded", reason: decision.reason });
-      // Degraded mode is honest: strong deterministic signals still escalate,
-      // marked as unjudged, rather than silently dropping a possible accident.
-      const strong = signals.includes("interaction:contact_visible") || signals.includes("changes:new_vehicle_contact");
-      return strong
-        ? { is_incident: true, incident_type: "traffic-accident", severity: "medium", reason: `local model unavailable; deterministic signals: ${signals.join(", ")}`, cleared: false, degraded: true }
-        : { is_incident: false, incident_type: "none", severity: "none", reason: "model unavailable and signals inconclusive", cleared: false, degraded: true };
+      return degradedVerdict(signals, "local model unavailable");
     }
 
-    const out = await inference.complete({
-      model: decision.model,
-      endpoint: decision.endpoint,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: `Signals fired: ${signals.join(", ")}\n\nObservations, oldest first:\n${digest(context)}` },
-      ],
-      maxTokens: 1500,
-      jsonSchema: JUDGE_SCHEMA,
-    });
+    // A runtime inference failure (endpoint unreachable, timeout) must NEVER crash
+    // the observation handler: perception is a firehose, and one failed judgment
+    // degrades, it does not take the platform down. Offline-first (PRD 6.2).
+    let out;
+    try {
+      out = await inference.complete({
+        model: decision.model,
+        endpoint: decision.endpoint,
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: `Signals fired: ${signals.join(", ")}\n\nObservations, oldest first:\n${digest(context)}` },
+        ],
+        maxTokens: 1500,
+        jsonSchema: JUDGE_SCHEMA,
+      });
+    } catch (err) {
+      record({ tool: "judge.infer", verb: "read", outcome: "degraded", reason: `inference failed: ${String(err.message).slice(0, 120)}` });
+      return degradedVerdict(signals, "inference unreachable");
+    }
     stats.inferences += 1;
     const parsed = extractJson(out.text);
     if (!parsed) {
