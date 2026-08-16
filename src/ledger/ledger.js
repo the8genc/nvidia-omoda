@@ -95,13 +95,16 @@ export function createLedger({ path = "var/ledger/actions.jsonl", broken = false
       return { ok: true, length: memory.length };
     },
 
-    query({ since, tier, agent, verb, impact, limit = 100 } = {}) {
+    query({ since, tier, agent, verb, impact, intentId, outcome, kind, limit = 100 } = {}) {
       return memory
         .filter((r) => (since ? r.at >= since : true))
         .filter((r) => (tier ? r.tier === tier : true))
         .filter((r) => (agent ? r.agent === agent : true))
         .filter((r) => (verb ? r.verb === verb : true))
         .filter((r) => (impact ? (r.impact ?? []).includes(impact) : true))
+        .filter((r) => (intentId ? r.intentId === intentId : true))
+        .filter((r) => (outcome ? r.outcome === outcome : true))
+        .filter((r) => (kind ? r.kind === kind : true))
         .slice(-limit);
     },
   };

@@ -50,6 +50,14 @@ export async function authorize(action = {}, ctx = {}) {
     impact: action.impact ?? [],
     argsHash: hashArgs(action.args),
     actionId: action.actionId ?? null,
+    // Robust audit linkage: every broker row is tied to the incident that caused
+    // it, and to the concrete external call it governs, so a human reviewing the
+    // audit DB can reconstruct a whole response and see exactly what was reached.
+    ...(action.intentId ? { intentId: action.intentId } : {}),
+    ...(action.resource ? { resource: action.resource } : {}),
+    ...(action.request
+      ? { target: `${action.request.method ?? ""} ${action.request.host ?? ""}${action.request.path ?? ""}`.trim() }
+      : {}),
   };
 
   // Best-effort record. A refusal must still be evidence, but a ledger failure

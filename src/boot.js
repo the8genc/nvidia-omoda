@@ -30,6 +30,7 @@ import { createBus } from "./bus.js";
 import { createAgenticTelemetry, setGlobalTelemetry } from "./telemetry/agentic.js";
 import { skillLevelMap } from "./telemetry/display.js";
 import { narrateEntry } from "./telemetry/narrate.js";
+import { isAuditWorthy, ledgerToAudit } from "./telemetry/audit.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -107,8 +108,13 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     // The agent-action stream is a compact projection for the dashboard: name,
     // level, action, instruction (plus seq/tier for ordering and colour). The
     // full hash-chained record stays on disk and on /v1/ledger, one seq lookup
-    // away.
-    onAppend: (rec) => bus.publish("agent", narrateEntry(rec, levelMap)),
+    // away. The audit stream is the eight-field projection of the same record,
+    // filtered to the triggered response chain (quiet frame review is never here
+    // because it is never ledgered).
+    onAppend: (rec) => {
+      bus.publish("agent", narrateEntry(rec, levelMap));
+      if (isAuditWorthy(rec)) bus.publish("audit", ledgerToAudit(rec, levelMap));
+    },
   });
   // The ingest-layer take-action triggers, editable from the admin portal.
   const triggers = createTriggerStore({ path: process.env.OMODA_TRIGGERS ?? "var/triggers.json", ledger });
@@ -241,7 +247,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}${coco ? " (coco adapter + judge)" : ""}` : ""}`);
-    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
+    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic,audit}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
+    line(`  audit   condensed stream on /v1/out/audit; full record at http://${host}:${port}/ui/audit (admin)`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
     line(`  triggers ${triggers.size} take-action rule(s) in the ingest layer; edit at /ui/triggers`);

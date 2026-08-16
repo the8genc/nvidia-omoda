@@ -16,6 +16,7 @@ import { consentKind } from "./domain/taxonomy.js";
 import { telemetry } from "./telemetry/agentic.js";
 import { candidateSignals } from "./coco/judge.js";
 import { narrateResponse } from "./telemetry/narrate.js";
+import { handoffToAudit } from "./telemetry/audit.js";
 
 // L0's routing table: which L1 domain agent owns which incident type. This is
 // the deterministic half of "route to an L1". A confirmed incident_type maps
@@ -107,10 +108,12 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
     const isDestructive = declared.verb === "update" || declared.verb === "delete";
     const action = {
       actionId: `l0-${intent.id.slice(0, 12)}-${Date.now()}`,
+      intentId: intent.id,
       agent: declared.agent,
       tool: declared.tool,
       verb: declared.verb,
       impact: declared.impact,
+      resource: declared.resource ?? undefined,
       declared: true,
       reason: plan.reason,
       request: declared.grant
@@ -146,13 +149,17 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
 
     if (verdict.verdict === "incident" || verdict.verdict === "attached") {
       const l1 = L1_BY_INCIDENT[verdict.incidentType] ?? deterministicL1 ?? "roadside";
-      record({ tool: "l0.review", outcome: "routed-to-l1", reason: `${verdict.incidentType ?? "?"} -> ${l1}`, intentId: verdict.intentId });
+      // The trigger event: L0 saw something and is acting. Record the take-action
+      // phrase (when a trigger fired) so the audit trail carries the trigger word.
+      record({ tool: "l0.review", outcome: "routed-to-l1", reason: `${verdict.incidentType ?? "?"} -> ${l1}`, intentId: verdict.intentId, triggerPhrase: verdict.trigger ?? null });
       telemetry.route({ actor: "l0", target: l1, intentId: verdict.intentId, detail: { decision: "route-to-l1", incidentType: verdict.incidentType, signals, inferenceUsed: true } });
       // Narrate the whole response flow down the org chart, but only when a NEW
-      // incident opens (not on every subsequent frame of the same incident).
+      // incident opens (not on every subsequent frame of the same incident). The
+      // same handoffs feed the audit stream as agent-to-agent engagement events.
       if (verdict.verdict === "incident" && bus) {
         for (const ev of narrateResponse({ incidentType: verdict.incidentType, l1, intentId: verdict.intentId }, levelMap)) {
           bus.publish("agent", ev);
+          bus.publish("audit", handoffToAudit(ev, levelMap));
         }
       }
       return { ...verdict, reviewed: true, routedToL1: l1, signals, inferenceUsed: true };

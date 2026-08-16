@@ -14,7 +14,8 @@ import {
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
-import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage, KnowledgePage, TriggersPage } from "../web/ui.js";
+import { render, SkillsPage, IntentsPage, LedgerPage, AuditPage, AgentNewPage, KnowledgePage, TriggersPage } from "../web/ui.js";
+import { skillLevelMap } from "../telemetry/display.js";
 import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { safeParseManifest } from "../schema/manifest.js";
@@ -207,6 +208,20 @@ export function createApp({
     }
     if (path === "/ui/ledger" && method === "GET") {
       return html(200, render(LedgerPage({ entries: ledger.query({ limit: 200 }), chain: ledger.verify() })));
+    }
+    if (path === "/ui/audit" && method === "GET") {
+      // The robust audit-DB view: the full hash-chained record, filterable, admin
+      // only. The dashboard's /v1/out/audit stream is the condensed projection.
+      const q = Object.fromEntries(url.searchParams.entries());
+      const filters = {
+        intentId: q.intent || undefined, agent: q.agent || undefined, tier: q.tier || undefined,
+        outcome: q.outcome || undefined, verb: q.verb || undefined, since: q.since || undefined,
+      };
+      const entries = ledger.query({ ...filters, limit: Number(q.limit) || 500 });
+      return html(200, render(AuditPage({
+        entries, chain: ledger.verify(), levelMap: skillLevelMap(skills),
+        filters: { intent: q.intent, agent: q.agent, tier: q.tier, outcome: q.outcome, verb: q.verb, since: q.since },
+      })));
     }
     if (path === "/ui/decide" && method === "POST") {
       const form = new URLSearchParams(await readBody(req));

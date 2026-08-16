@@ -207,3 +207,30 @@ test("a forged csrf cannot edit triggers", async (t) => {
   assert.equal(r.status, 403);
   assert.equal(triggers.size, before);
 });
+
+test("the audit page is admin-gated and shows the robust record with the chain state", async (t) => {
+  const { app, ledger } = harness(t);
+  // seed a couple of ledgered actions with the robust linkage fields
+  ledger.append({ kind: "orchestrator", agent: "l0", tool: "l0.review", verb: "read", outcome: "routed-to-l1", reason: "traffic-accident -> accident", intentId: "int-7", triggerPhrase: "collision" });
+  ledger.append({ agent: "emergency-dispatch", tool: "dispatch.unit.request", verb: "create", impact: ["legal"], tier: "consequential", authority: "decision:d-1", decidedBy: "arif", outcome: "executed", intentId: "int-7", target: "POST 100.71.143.26/api/dispatch" });
+
+  // no auth -> 401
+  const noauth = await req(app, { path: "/ui/audit", auth: null });
+  assert.equal(noauth.status, 401);
+
+  // admin -> the full record is present, not just the condensed fields
+  const page = await req(app, { path: "/ui/audit" });
+  assert.equal(page.status, 200);
+  assert.match(page.body, /Audit trail/);
+  assert.match(page.body, /chain verifies/);
+  assert.match(page.body, /emergency-dispatch/);
+  assert.match(page.body, /int-7/, "the incident id links the chain");
+  assert.match(page.body, /collision/, "the trigger word is recorded");
+  assert.match(page.body, /arif/, "who approved is recorded");
+  assert.match(page.body, /api\/dispatch/, "the concrete target call is recorded");
+  assert.match(page.body, /raw/, "the raw hash-chained record is available per row");
+
+  // a filter narrows the query (intent that does not exist -> empty)
+  const empty = await req(app, { path: "/ui/audit?intent=nope" });
+  assert.match(empty.body, /No matching audit records/);
+});
