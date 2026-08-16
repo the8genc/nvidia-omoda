@@ -34,7 +34,7 @@ export class LedgerWriteError extends Error {
   }
 }
 
-export function createLedger({ path = "var/ledger/actions.jsonl", broken = false } = {}) {
+export function createLedger({ path = "var/ledger/actions.jsonl", broken = false, onAppend = null } = {}) {
   let seq = 0;
   let prevHash = GENESIS;
   const memory = [];
@@ -79,6 +79,7 @@ export function createLedger({ path = "var/ledger/actions.jsonl", broken = false
       seq = rec.seq;
       prevHash = rec.hash;
       memory.push(rec);
+      try { onAppend?.(rec); } catch { /* observers never block the record */ }
       return rec;
     },
 

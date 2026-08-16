@@ -63,6 +63,16 @@ export function candidateSignals(obs) {
   if (obs.visible_road_damage || obs.maintenance?.pothole_visible || obs.maintenance?.damaged_surface_visible || obs.maintenance?.flooding_visible) {
     signals.push("road:damage_or_flooding");
   }
+
+  // The live COCO shape: a followup like "is there imminent danger?" answered
+  // true is COCO's own model raising its hand. Still stage-1 only: it makes a
+  // CANDIDATE, judgment remains ours.
+  if (obs.danger_signal === true) signals.push("followup:danger_true");
+  // And the description itself: concrete hazard words, not vibes. "stopped" and
+  // "slow" are deliberately absent; nominal traffic stops constantly.
+  if (/\b(fire|smoke|smoking|collision|collid|crash|overturn|injur|explosion|ambulance|firefighter|fire truck|wreck)\b/i.test(lc(obs.scene_description))) {
+    signals.push("description:danger_lexicon");
+  }
   return [...new Set(signals)];
 }
 

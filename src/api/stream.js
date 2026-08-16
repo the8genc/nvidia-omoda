@@ -239,13 +239,34 @@ export function createUpstreamDialer({
   };
 }
 
-/** Wire the ingest to a real WebSocket server on an existing http server. */
-export async function attachStreamServer({ server, ingest, path = "/v1/stream" }) {
+/**
+ * Wire the ingest to a real WebSocket server on an existing http server, and,
+ * when the output layer is configured, the /v1/out/* broadcast endpoints too.
+ * Ingest requires intent:propose; outputs require intent:read. Same server,
+ * opposite directions, both fail closed.
+ */
+export async function attachStreamServer({ server, ingest, path = "/v1/stream", outputs = null }) {
   const { WebSocketServer } = await import("ws");
   const wss = new WebSocketServer({ noServer: true });
+  const { outputTopicFor, acceptViewer, bridgeSocket } = await import("./outputs.js");
 
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url, "http://localhost");
+
+    const topic = outputs ? outputTopicFor(url.pathname) : null;
+    if (topic) {
+      const auth = acceptViewer({ headers: req.headers, tokens: outputs.tokens });
+      if (!auth.ok) {
+        socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n${auth.reason}`);
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        bridgeSocket({ ws, bus: outputs.bus, topic });
+      });
+      return;
+    }
+
     if (url.pathname !== path) { socket.destroy(); return; }
     const auth = ingest.accept({ headers: req.headers });
     if (!auth.ok) {
