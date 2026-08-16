@@ -154,9 +154,13 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   // and routing every proposed intent to a declared capability awaiting consent.
   // The judge is L0's detection engine, created once and shared.
   const judge = createObservationJudge({ intents, ledger, triggers });
+  // Set once the Telegram client exists (below); the orchestrator calls it when a
+  // routed action needs consent, so a dangerous path actually reaches the phone.
+  let escalateToOperator = null;
   const orchestrator = createOrchestrator({
     intents, registry: index, ledger, knowledge, judge, bus, levelMap,
     localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
+    onEscalate: (args) => escalateToOperator?.(args),
   });
   routeIntent = (intent) => orchestrator.onIntent(intent);
 
@@ -243,6 +247,13 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     });
     telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport, mediaTransform, undo });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
+    // Close the human gate: when L0 routes a dangerous action, send the operator
+    // an Approve/Deny message on the first allowed chat. Inbound taps are already
+    // handled by the loop above; this is the outbound half that was missing.
+    const operatorChat = tgIds[0];
+    escalateToOperator = async ({ intent, action }) => {
+      await telegramClient.escalate({ chatId: operatorChat, intent, action });
+    };
   }
 
   if (print) {
