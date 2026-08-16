@@ -118,7 +118,7 @@ test("agent activity flows to the bus through the ledger hook", async () => {
 });
 
 // ── the output layer over a REAL socket ───────────────────────────────────
-test("the demo app subscribes with a read token and sees frames, observations, and agent activity live", async (t) => {
+test("the demo app subscribes with no token and sees frames, observations, and agent activity live", async (t) => {
   const { WebSocket } = await import("ws");
   const bus = createBus();
   const tokens = createTokenStore();
@@ -127,23 +127,23 @@ test("the demo app subscribes with a read token and sees frames, observations, a
   const ingest = createStreamIngest({ tokens, intents: createIntentStore(), ledger: ledger() });
 
   const server = createServer((_q, r) => { r.writeHead(426); r.end(); });
-  await attachStreamServer({ server, ingest, outputs: { bus, tokens } });
+  await attachStreamServer({ server, ingest, outputs: { bus, tokens, open: true } });
   await new Promise((r) => server.listen(3161, "127.0.0.1", r));
   t.after(() => server.close());
 
-  // No token: refused. Propose-only token: refused (read is the viewer scope).
-  for (const hdrs of [{}, { authorization: `Bearer ${proposeOnly.token}` }]) {
-    const refused = await new Promise((resolve) => {
-      const ws = new WebSocket("ws://127.0.0.1:3161/v1/out/agents", { headers: hdrs });
-      ws.on("unexpected-response", (_r, res) => resolve(res.statusCode));
-      ws.on("open", () => resolve("OPENED"));
-    });
-    assert.equal(refused, 401);
-  }
+  // Outputs are OPEN by decision (same-hardware consumers); ingest is not.
+  // Watching is free, proposing still needs a token.
+  const ingestRefused = await new Promise((resolve) => {
+    const ws = new WebSocket("ws://127.0.0.1:3161/v1/stream");
+    ws.on("unexpected-response", (_r, res) => resolve(res.statusCode));
+    ws.on("open", () => resolve("OPENED"));
+  });
+  assert.equal(ingestRefused, 401, "the ingest door keeps its token");
+  void viewer; void proposeOnly;
 
   const received = { frame: [], observation: [], agent: [] };
   const open = (path, key) => new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:3161${path}`, { headers: { authorization: `Bearer ${viewer.token}` } });
+    const ws = new WebSocket(`ws://127.0.0.1:3161${path}`);
     ws.on("open", () => resolve(ws));
     ws.on("message", (d) => received[key].push(JSON.parse(String(d))));
     ws.on("unexpected-response", (_r, res) => reject(new Error(`refused ${res.statusCode}`)));

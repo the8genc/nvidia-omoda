@@ -74,7 +74,7 @@ test("an instrumented inference call narrates a correlated call/result pair", as
   assert.match(result.detail.output, /the answer/);
 });
 
-test("the /v1/out/agentic endpoint delivers to a read-scoped viewer over a real socket", async (t) => {
+test("the /v1/out/agentic endpoint delivers openly over a real socket, ingest still closed", async (t) => {
   const { WebSocket } = await import("ws");
   const bus = createBus();
   const tokens = createTokenStore();
@@ -84,19 +84,14 @@ test("the /v1/out/agentic endpoint delivers to a read-scoped viewer over a real 
     ledger: createLedger({ path: `/tmp/omoda-agentic-${Date.now()}.jsonl` }),
   });
   const server = createServer((_q, r) => { r.writeHead(426); r.end(); });
-  await attachStreamServer({ server, ingest, outputs: { bus, tokens } });
+  await attachStreamServer({ server, ingest, outputs: { bus, tokens, open: true } });
   await new Promise((r) => server.listen(3162, "127.0.0.1", r));
   t.after(() => server.close());
-
-  const refused = await new Promise((resolve) => {
-    const ws = new WebSocket("ws://127.0.0.1:3162/v1/out/agentic");
-    ws.on("unexpected-response", (_r, res) => resolve(res.statusCode));
-  });
-  assert.equal(refused, 401);
+  void viewer;
 
   const got = [];
   const ws = await new Promise((resolve, reject) => {
-    const w = new WebSocket("ws://127.0.0.1:3162/v1/out/agentic", { headers: { authorization: `Bearer ${viewer.token}` } });
+    const w = new WebSocket("ws://127.0.0.1:3162/v1/out/agentic");
     w.on("open", () => resolve(w));
     w.on("message", (d) => got.push(JSON.parse(String(d))));
     w.on("unexpected-response", (_r, res) => reject(new Error(`refused ${res.statusCode}`)));

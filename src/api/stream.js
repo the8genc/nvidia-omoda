@@ -255,11 +255,17 @@ export async function attachStreamServer({ server, ingest, path = "/v1/stream", 
 
     const topic = outputs ? outputTopicFor(url.pathname) : null;
     if (topic) {
-      const auth = acceptViewer({ headers: req.headers, tokens: outputs.tokens });
-      if (!auth.ok) {
-        socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n${auth.reason}`);
-        socket.destroy();
-        return;
+      // Outputs are open by explicit decision (Arif, 2026-08-16): every consumer
+      // runs on the same hardware, the server binds the tailnet address at
+      // widest, and all four topics are read-only with secrets stripped before
+      // publish. Ingest below keeps its token: watching is free, proposing is not.
+      if (outputs.open !== true) {
+        const auth = acceptViewer({ headers: req.headers, tokens: outputs.tokens });
+        if (!auth.ok) {
+          socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n${auth.reason}`);
+          socket.destroy();
+          return;
+        }
       }
       wss.handleUpgrade(req, socket, head, (ws) => {
         bridgeSocket({ ws, bus: outputs.bus, topic });

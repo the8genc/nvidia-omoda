@@ -132,7 +132,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
 
   const { createServer } = await import("node:http");
   const streamServer = createServer((_req, res) => { res.writeHead(426); res.end("upgrade required"); });
-  await attachStreamServer({ server: streamServer, ingest, outputs: { bus, tokens } });
+  await attachStreamServer({ server: streamServer, ingest, outputs: { bus, tokens, open: true } });
   await new Promise((r) => streamServer.listen(streamPort, streamHost, r));
 
   // Outbound client mode (PRD 23.1): dial a stream that is already pushing
@@ -226,7 +226,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`      secret  ${operator.secret}`);
     line(`    see       ${see.token}`);
     line(`      secret  ${see.secret}`);
-    line(`    viewer    ${viewer.token}`);
+    line(`    viewer    ${viewer.token} (outputs are open; token only needed if outputs.open is turned off)`);
     line("");
   }
 
