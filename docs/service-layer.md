@@ -40,3 +40,47 @@ The agents reach it because the emergency-dispatch and roadside manifests declar
 their egress to `100.71.143.26:3120`, so OpenShell governs the call: a read goes
 straight through, a dispatch write is absent from policy until a recorded human
 decision materialises it.
+
+## How the agents know what they can call
+
+Two paths carry this, and they are kept in sync:
+
+1. **The planner catalog.** When OMODA plans an action, the model is handed every
+   declared tool with its verb, blast domain, owning agent, the concrete API it
+   reaches, and whether it is OpenShell-gated (`src/models/plan.js`,
+   `renderCatalog`). The model only NAMES a tool; the endpoint and the gate are
+   context, never authority. A tool that is not in this catalog is undeclared, and
+   undeclared is denied.
+2. **The skill bodies.** Each agent's `omoda.skill.md` prose names the concrete
+   endpoints it (or its downstream L3) acts on and which are gated, so the agent's
+   own instructions match the live service layer.
+
+## Trigger -> scenario -> endpoint -> protection
+
+This is the full path from a CCTV observation to a governed call. OMODA matches an
+observation's text against the take-action triggers (`src/transport/triggers.js`),
+routes to the L1, which runs the response plan (`src/domain/response-plan.js`) down
+to the L3 that holds the egress.
+
+| Trigger phrases | L1 (OMODA routes to) | L2 worker | L3 call | Endpoint | OpenShell |
+|---|---|---|---|---|---|
+| crash, collision, wreck, rear-ended, T-boned, hit and run | accident | ambulatory | dispatch.unit.request (ems) | `POST /api/dispatch` | **approval** |
+| injured, person down, pedestrian struck, unconscious | accident | ambulatory | dispatch.unit.request (ems) | `POST /api/dispatch` | **approval** |
+| (accident, police needed) | accident | police | dispatch.unit.request (police) | `POST /api/dispatch` | **approval** |
+| fire, smoke, flames, ablaze, explosion, burning | fire | fire-department | dispatch.unit.request (fire) | `POST /api/dispatch` | **approval** |
+| (fire, injuries) | fire | ambulatory | dispatch.unit.request (ems) | `POST /api/dispatch` | **approval** |
+| fallen sign, debris, obstruction, blocked lane, tree branch | roadside | roadside | roadside.workorder.create | `POST /api/roads/workorders` | none (auto-UNDO) |
+| pothole, road damage, flooding, sinkhole, washed out | roadside | roadside | roadside.workorder.create | `POST /api/roads/workorders` | none (auto-UNDO) |
+
+Reads that ground the decision (`GET /api/dispatch/**`, `GET /api/roads/segments/**`,
+`GET /api/roads/workorders/**`) run unattended at every level. Cancelling a live
+callout (`DELETE /api/dispatch/{call_id}`) is two-person.
+
+The triggers are editable from the admin portal (`/ui/triggers`), so the operator
+can add a phrase or repoint it to a different L1 without a redeploy; the mapping
+above is the seeded default.
+
+## For dashboard engineers
+
+See `docs/dashboard-integration.md`: the read/pollable endpoints, exact JSON
+shapes, poll cadence, and how to render the OpenShell danger boundary.

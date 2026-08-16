@@ -45,8 +45,17 @@ const SYSTEM = [
 ].join("\n");
 
 function renderCatalog(rows) {
+  // The model sees, per tool: verb, blast domain, the owning agent, the concrete
+  // API it reaches (grant), and whether calling it needs a human decision. That
+  // last part is context, not authority: the model still only NAMES a tool, and
+  // the Broker gates it regardless of what the model believes about consent.
   return rows
-    .map((r) => `- ${r.tool} (${r.verb}${r.impact?.length ? `, affects: ${r.impact.join("+")}` : ""}) [agent: ${r.agent}]`)
+    .map((r) => {
+      const affects = r.impact?.length ? `, affects: ${r.impact.join("+")}` : "";
+      const api = r.grant ? ` -> ${r.grant}` : "";
+      const gate = r.consent && r.consent !== "none" ? ` [OpenShell-gated: ${r.consent}]` : "";
+      return `- ${r.tool} (${r.verb}${affects}) [agent: ${r.agent}]${api}${gate}`;
+    })
     .join("\n");
 }
 
