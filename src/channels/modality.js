@@ -124,20 +124,55 @@ export function createModalityTransform({
   }
 
   /**
-   * The single entry point the loop calls for any media message.
-   * Video is detected and labeled from day one; the describe path is staged
-   * (build plan cut list), and saying so beats pretending.
+   * Video to screened description plus transcript. Same shape as voice: local
+   * Omni, zero egress, S8 screen. The shared vLLM serves with video enabled
+   * (--media-io-kwargs fps 2, frames capped), so a Telegram video note goes
+   * through the same one model as everything else.
    */
+  async function describeVideo({ fileId, mimeType = "video/mp4", modality = "video" }) {
+    const decision = route({ task: TASK.PERCEIVE, payload: "", multimodal: true, localAvailable: localAvailable() });
+
+    const started = now();
+    const bytes = await download(fileId);
+    const out = await inference.complete({
+      model: decision.model,
+      endpoint: decision.endpoint,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "video_url", video_url: { url: `data:${mimeType};base64,${bytes.toString("base64")}` } },
+          { type: "text", text: "Describe what happens in this video in two sentences, then transcribe any speech verbatim. If there is no speech, say so." },
+        ],
+      }],
+      // Video reasoning runs long: 700 tokens returned an empty answer live (all
+      // spent thinking); 2500 produced the description in one pass.
+      maxTokens: 2500,
+    });
+
+    const rawText = stripReasoning(out.text).trim();
+    if (!rawText) throw new TransformRefused("the model returned an empty description", { modality });
+    const { clean, flags } = screenText(rawText);
+
+    return {
+      modality,
+      transcript: clean,
+      flags,
+      screened: flags.length > 0,
+      model: out.model,
+      endpoint: out.endpoint,
+      egress: decision.egress,
+      bytes: bytes.length,
+      contentKey: createHash("sha256").update(bytes).digest("hex").slice(0, 24),
+      latencyMs: now() - started,
+    };
+  }
+
+  /** The single entry point the loop calls for any media message. */
   async function transform(detected) {
     if (detected.modality === "voice") return transcribe(detected);
-    if (detected.modality === "video") {
-      throw new TransformRefused(
-        "video is detected and labeled, and its transform is staged; send a voice note or text for now",
-        { modality: "video" },
-      );
-    }
+    if (detected.modality === "video") return describeVideo(detected);
     throw new TransformRefused(`unsupported modality; send text, a voice note, or video`, { modality: detected.modality });
   }
 
-  return { detectModality, download, transcribe, transform };
+  return { detectModality, download, transcribe, describeVideo, transform };
 }

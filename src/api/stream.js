@@ -13,6 +13,7 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { SCOPES, SIGNATURE_WINDOW_MS } from "./auth.js";
+import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 
 export const StreamEnvelope = z.object({
   event_id: z.string().min(1).max(200),
@@ -135,6 +136,15 @@ export function createStreamIngest({
 
     const { intent } = intents.propose({
       idempotencyKey: env.event_id,
+      envelope: createEnvelope({
+        source: SOURCE.STREAM,
+        // The dial identity is issued only for outbound client mode, so the
+        // direction is knowable from who is speaking.
+        direction: caller.id.startsWith("stream:dial") ? DIRECTION.OUTBOUND_DIAL : DIRECTION.INBOUND,
+        modality: MODALITY.JSON,
+        idempotencyKey: env.event_id,
+        now: () => now,
+      }),
       body: {
         source: "stream", kind: "detection", detector: p.detector,
         confidence: p.confidence, observed_at: new Date(env.ts * 1000).toISOString(),

@@ -5,6 +5,8 @@
 // intent store, which enforces separation of duties and single use. If someone
 // forges a callback, the store still refuses it.
 
+import { createEnvelope, SOURCE, DIRECTION } from "../transport/envelope.js";
+
 export function createTelegramLoop({
   client,
   intents,
@@ -79,6 +81,10 @@ export function createTelegramLoop({
         const { intent, duplicate } = intents.propose({
           idempotencyKey: `tg-media-${cmd.fileId}`,
           caller: proposer,
+          envelope: createEnvelope({
+            source: SOURCE.TELEGRAM, direction: DIRECTION.INBOUND,
+            modality: t.modality, idempotencyKey: `tg-media-${cmd.fileId}`,
+          }),
           body: {
             source: "telegram", kind: "task",
             evidence: { modality: t.modality, transcript: t.transcript, flags: t.flags, model: t.model },

@@ -53,12 +53,15 @@ export function createIntentStore({ singleOperator = false } = {}) {
 
   return {
     /** S4: the same Idempotency-Key always returns the same intent. */
-    propose({ idempotencyKey, body, caller }) {
+    propose({ idempotencyKey, body, caller, envelope = null }) {
       if (idempotencyKey && byIdemKey.has(idempotencyKey)) {
         return { intent: byIdemKey.get(idempotencyKey), duplicate: true };
       }
       const intent = {
         id: `int_${randomUUID()}`,
+        // The transport envelope (PRD 23.1): which door, which direction, which
+        // modality, recorded once at the edge and never re-derived downstream.
+        envelope,
         state: INTENT_STATE.PROPOSED,
         proposedBy: caller.id,
         source: body.source ?? caller.id,

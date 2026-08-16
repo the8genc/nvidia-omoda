@@ -16,6 +16,7 @@ import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
 import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage, KnowledgePage } from "../web/ui.js";
 import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
+import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { safeParseManifest } from "../schema/manifest.js";
 import { compile } from "../policy/compile.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -282,7 +283,10 @@ export function createApp({
       try { body = ProposeBody.parse(JSON.parse(raw)); }
       catch (err) { return json(res, 422, { error: "schema", message: String(err.message).slice(0, 400) }); }
 
-      const { intent, duplicate } = intents.propose({ idempotencyKey: idem, body, caller });
+      const { intent, duplicate } = intents.propose({
+        idempotencyKey: idem, body, caller,
+        envelope: createEnvelope({ source: SOURCE.API, direction: DIRECTION.INBOUND, modality: MODALITY.JSON, idempotencyKey: idem }),
+      });
 
       // S3 + S4 interact here. An idempotent retry legitimately carries the
       // same signature, so replay protection runs only when this is NOT a
