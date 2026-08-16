@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Concern: the reviewed commit gate — frontend TS/Vue against the KB Vue3 + language-agnostic standards, and all backend/script Python against the language-agnostic standard | Non-concern: how a gate is checked (git-agent-verdict owns that), or the UI/UX visual gate (a separate screenshot review) | IO: (message, tool version) -> status
+# Enable per clone: git config core.hooksPath .githooks   Bypass (bootstrap/maintenance only): git commit --no-verify
+set -euo pipefail
+
+git agent-verdict --require-version 1.0
+
+# The frontend is Vue 3 + TypeScript; reviewed against both KB standards plus the single-line-comment rule.
+git agent-verdict "$1" webapp \
+  --doc /home/fredrik/.knowledge-base/coding-standards/language-agnostic-programming-standards.md \
+  --doc /home/fredrik/.knowledge-base/coding-standards/vue3-project-standards.md \
+  --rule "every comment is a single line; block comments and multi-line comment runs are forbidden" \
+  --rule "the 3D rendering engine is domain-agnostic: it draws only the generic render primitives it is handed by the backend — a ground plane and posed shapes (boxes now, named models later) carrying their own size, pose, and color — and must never reference or branch on any domain class or vocabulary term (vehicle, person, cyclist, bicycle, car, avatar, etc.); the class-to-geometry mapping lives in the backend, so a grep of the render code for those words returns nothing" \
+  --path webapp/frontend
+
+# All Python — the backend web layer, the backend processing pipeline, and the research scripts — is reviewed against the language-agnostic standard.
+git agent-verdict "$1" python \
+  --doc /home/fredrik/.knowledge-base/coding-standards/language-agnostic-programming-standards.md \
+  --path scripts \
+  --path webapp/backend/app.py \
+  --path webapp/backend/pipeline

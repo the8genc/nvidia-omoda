@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Concern: the mechanical local gate — file annotations on the webapp | Non-concern: what makes an annotation good (the standards own that), or the reviewed gates (commit-msg) | IO: (working tree) -> pass/fail
+# Enable per clone: git config core.hooksPath .githooks   Bypass (bootstrap only): git commit --no-verify
+set -euo pipefail
+
+if [ -d webapp ]; then
+	command -v annotated-tree >/dev/null 2>&1 || { echo "pre-commit: annotated-tree not on PATH" >&2; exit 1; }
+	annotated-tree --strict-check webapp --hidden --max-length 200 || { echo "pre-commit: ANNOTATION GATE FAILED (webapp)" >&2; exit 1; }
+fi

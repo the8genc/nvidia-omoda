@@ -1,0 +1,14 @@
+.frame_ref.png
+*.mp4
+__pycache__/
+.venv/
+*overlay*.png
+.frame*
+.diff*
+.det*
+.b1_*
+webapp/backend/jobs/
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+webapp/**/__pycache__/
+.undistort*
