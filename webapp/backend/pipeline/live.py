@@ -55,6 +55,11 @@ class LiveLoop:
         # the source currently playing (the D4RT worker feeds its own capture off this)
         return self._source
 
+    def latest_bgr(self):
+        # the most recent raw BGR frame (or None) — the obfuscator segments this
+        item = self._latest_frame
+        return item[0] if item else None
+
     def pause(self):
         self._running = False
 

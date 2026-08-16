@@ -9,17 +9,34 @@ import { injectStrict } from '@/composables/injectStrict'
 
 const live = injectStrict(LIVE_KEY)
 
-type Mode = 'rgb' | 'boxes' | 'd4rt'
+type Mode = 'rgb' | 'boxes' | 'privacy' | 'd4rt'
 const mode = ref<Mode>('rgb')
 const showBoxes = computed(() => mode.value === 'boxes')
-// only run detection (YOLOE) while boxes are actually on screen (d4rt has its own subscriber-gated model)
-watch(mode, (m) => live.setBoxesShown(m === 'boxes'), { immediate: true })
+// each GPU model runs only while its view is on screen (d4rt has its own subscriber-gated worker)
+watch(
+  mode,
+  (m) => {
+    live.setBoxesShown(m === 'boxes')
+    live.setObfuscatedShown(m === 'privacy')
+  },
+  { immediate: true },
+)
 const subtitle = computed(() =>
-  mode.value === 'd4rt' ? '3D reconstruction' : mode.value === 'boxes' ? 'detections' : 'live',
+  mode.value === 'd4rt'
+    ? '3D reconstruction'
+    : mode.value === 'privacy'
+      ? 'privacy · segmented'
+      : mode.value === 'boxes'
+        ? 'detections'
+        : 'live',
 )
 
-const hasFrame = computed(() => live.latestRgb.value !== null)
-const rgbUrl = computed(() => live.latestRgb.value?.rgb ?? '')
+const hasFrame = computed(() =>
+  mode.value === 'privacy' ? live.latestObfuscated.value !== null : live.latestRgb.value !== null,
+)
+const displayUrl = computed(() =>
+  mode.value === 'privacy' ? (live.latestObfuscated.value ?? '') : (live.latestRgb.value?.rgb ?? ''),
+)
 const shownBoxes = computed(() => live.displayedBoxes.value)
 
 // confidence -> rainbow ramp: blue (low) through green/yellow to red (high), rankable at a glance
@@ -44,6 +61,7 @@ function onImgLoad(): void {
       <div class="seg" role="group" aria-label="view mode">
         <button class="seg__btn" :class="{ 'is-on': mode === 'rgb' }" @click="mode = 'rgb'">RGB</button>
         <button class="seg__btn" :class="{ 'is-on': mode === 'boxes' }" @click="mode = 'boxes'">Boxes</button>
+        <button class="seg__btn" :class="{ 'is-on': mode === 'privacy' }" @click="mode = 'privacy'">Privacy</button>
         <button class="seg__btn" :class="{ 'is-on': mode === 'd4rt' }" @click="mode = 'd4rt'">D4RT</button>
       </div>
     </template>
@@ -51,7 +69,7 @@ function onImgLoad(): void {
     <div class="stage">
       <D4rtViewer v-if="mode === 'd4rt'" :enabled="true" class="d4rt" />
       <div v-else-if="hasFrame" class="frame">
-        <img :src="rgbUrl" class="frame__img" alt="Raw RGB frame" draggable="false" @load="onImgLoad" />
+        <img :src="displayUrl" class="frame__img" alt="live frame" draggable="false" @load="onImgLoad" />
         <svg
           v-if="showBoxes"
           class="frame__overlay"

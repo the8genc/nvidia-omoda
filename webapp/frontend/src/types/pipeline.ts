@@ -32,6 +32,8 @@ export interface LiveContext {
   // boxes resolved to the frame actually painted (see commitDisplayedFrame) so the overlay stays coherent
   displayedBoxes: Readonly<Ref<DetectionBox[]>>
   latestRgb: Readonly<Ref<RgbMessage | null>>
+  // privacy view: the latest FastSAM-obfuscated frame as a jpeg data-uri (each segment one colour)
+  latestObfuscated: Readonly<Ref<string | null>>
   running: Readonly<Ref<boolean>>
   commitDisplayedFrame: (seq: number) => void
   pause: () => Promise<void>
@@ -40,6 +42,7 @@ export interface LiveContext {
   toggle: () => void
   setEnabled: (value: boolean) => void
   setBoxesShown: (value: boolean) => void
+  setObfuscatedShown: (value: boolean) => void
   submitSource: (file: File) => Promise<void>
 }
 

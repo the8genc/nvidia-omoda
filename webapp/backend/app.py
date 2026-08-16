@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from pipeline import Pipeline, vlm
 from pipeline.d4rt_live import D4rtLoop
 from pipeline.live import LiveLoop
+from pipeline.obfuscator import ObfuscatorLoop
 
 # curated demo clips; the cycle button steps through them (add more files here, no code change)
 DEFAULTS_DIR = Path("/work/defaults")
@@ -36,6 +37,7 @@ LIVE_ROOT = Path("/work/webapp/backend/live")
 LIVE_ROOT.mkdir(parents=True, exist_ok=True)
 LIVE = LiveLoop(PIPELINE, DEFAULT_SOURCE)
 D4RT = D4rtLoop(LIVE)
+OBFUSCATOR = ObfuscatorLoop(LIVE)
 
 
 class _Observability:
@@ -71,6 +73,7 @@ async def lifespan(_app: FastAPI):
     loop = asyncio.get_running_loop()
     LIVE.start(loop)
     D4RT.start(loop)  # its own worker; idles until a d4rt viewer subscribes
+    OBFUSCATOR.start(loop)  # ditto; idles until a privacy viewer subscribes
     yield
 
 
@@ -117,6 +120,20 @@ async def d4rt_stream(ws: WebSocket):
         pass
     finally:
         D4RT.remove_client(ws)
+
+
+@app.websocket("/api/local/obfuscated-stream")
+async def obfuscated_stream(ws: WebSocket):
+    # privacy view: each frame segmented and flattened to one colour per segment; runs only while subscribed
+    await ws.accept()
+    OBFUSCATOR.add_client(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        OBFUSCATOR.remove_client(ws)
 
 
 @app.post("/api/live/source")
