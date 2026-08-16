@@ -11,7 +11,7 @@
 // descriptions are normalized into judge-consumable observations, and the
 // followup danger boolean plus a hazard lexicon feed the judge's stage-1 filter.
 //
-// describe() is a declared read capability (skills/coco-operations): asking the
+// describe() is a declared read capability (skills/coco): asking the
 // camera a question is egress like any other, ledgered like any other.
 
 import { z } from "zod";

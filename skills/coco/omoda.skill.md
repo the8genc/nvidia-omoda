@@ -1,5 +1,5 @@
 ---
-skill: coco-operations
+skill: coco
 agent: perception
 level: 3
 capabilities:
