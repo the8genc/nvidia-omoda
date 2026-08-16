@@ -19,6 +19,11 @@ export function d4rtWsUrl(): string {
   return `${WS_BASE}/local/d4rt-stream`
 }
 
+// the current source's static world (built once per clip on first d4rt connect, cached)
+export function d4rtWorldUrl(): string {
+  return `${API_BASE}/local/d4rt-world`
+}
+
 // on-demand VLM description of the latest frame (polled by the banner)
 export function describeUrl(): string {
   return `${API_BASE}/describe`

@@ -1,18 +1,25 @@
 # Concern: FastAPI routes for the live websocket pipeline — health, the shared ws, and swapping the live source | Non-concern: CV processing (pipeline pkg) | IO: (mp4) -> per-frame JSON stream
 import asyncio
 import json
+import struct
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
+from d4rt_backend.live import LiveStreamSession, StreamParams
 from pipeline import Pipeline, vlm
-from pipeline.d4rt_live import D4rtLoop
+from pipeline.d4rt_service import D4rtService
 from pipeline.live import LiveLoop
+
+# static-world wire header, matching `_WORLD_HEADER` in d4rt_backend/api.py:
+# grid_side u32, numPoints u32, radius f32, camera x/y/z 3xf32. The int16 xyz,
+# the uint8 labels and the uint16 spread follow, in that order.
+_WORLD_HEADER = struct.Struct("<IIf3f")
 
 # curated demo clips; the cycle button steps through them (add more files here, no code change)
 DEFAULTS_DIR = Path("/work/defaults")
@@ -35,7 +42,8 @@ print(f"pipeline ready on {PIPELINE.device}", flush=True)
 LIVE_ROOT = Path("/work/webapp/backend/live")
 LIVE_ROOT.mkdir(parents=True, exist_ok=True)
 LIVE = LiveLoop(PIPELINE, DEFAULT_SOURCE)
-D4RT = D4rtLoop(LIVE)
+# owns the warm D4RT engine + per-clip static-world cache; sessions are per-socket
+D4RT = D4rtService()
 
 
 class _Observability:
@@ -70,7 +78,7 @@ async def lifespan(_app: FastAPI):
     # start the always-on worker once, at boot — it runs independent of any observer
     loop = asyncio.get_running_loop()
     LIVE.start(loop)
-    D4RT.start(loop)  # its own worker; idles until a d4rt viewer subscribes
+    D4RT.start()  # warm the 13GB engine off the event loop; sessions are per-socket
     yield
 
 
@@ -105,18 +113,102 @@ async def rgb_stream(ws: WebSocket):
     await _serve(ws, "rgb")
 
 
+async def _d4rt_read_commands(ws: WebSocket, session: LiveStreamSession):
+    # client commands on the same socket the frames go out on (re-level / unlevel).
+    # ends quietly on disconnect — the send loop already reports why the stream stopped.
+    while True:
+        try:
+            raw = await ws.receive_text()
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        try:
+            command = json.loads(raw).get("type")
+        except json.JSONDecodeError:
+            continue
+        if command == "calibrate":
+            session.request_calibration()
+        elif command == "clear-ground":
+            session.clear_ground()
+
+
 @app.websocket("/api/local/d4rt-stream")
 async def d4rt_stream(ws: WebSocket):
-    # binary point-cloud frames (self-describing wire format); model runs only while subscribed
+    # a per-socket live reconstruction of the CURRENT live source: static world built once
+    # (cached), every pair levelled against it, moving blobs tracked, 6-class semantic wire frame.
+    # grid defaults to 96 for speed; ?grid= overrides. model runs only while this socket is open.
     await ws.accept()
-    D4RT.add_client(ws)
+    if D4RT.load_error:
+        await ws.close(code=4500, reason=D4RT.load_error[:120])
+        return
+    if not D4RT.loaded:
+        await ws.close(code=4503, reason="D4RT model is still warming up; try again shortly.")
+        return
+
+    clip = D4RT.clip_for(LIVE.current_source())
     try:
-        while True:
-            await ws.receive_text()
+        params = StreamParams.parse(
+            frames=int(ws.query_params.get("frames", 2)),
+            stride=int(ws.query_params.get("stride", 1)),
+            grid_side=int(ws.query_params.get("grid", D4RT.default_grid)),
+            segment=ws.query_params.get("segment", "1") not in ("0", "false"),
+            aspect=float(ws.query_params.get("aspect", 16 / 9)),
+        )
+    except ValueError as error:
+        await ws.close(code=4400, reason=str(error))
+        return
+
+    # build (or restore) the clip's static world before the first pair, so surfaces
+    # and blob tracking are live from frame one. Off the event loop — it holds the GPU.
+    scene = await run_in_threadpool(D4RT.ensure_scene, clip)
+    session = LiveStreamSession(D4RT.engine, clip.path, params, clip.crop, scene)
+    reader = None
+    try:
+        reconstructor = await run_in_threadpool(session.build_reconstructor)
+        await ws.send_json(session.hello(reconstructor))
+        reader = asyncio.create_task(_d4rt_read_commands(ws, session))
+        async with aclosing(session.frames(reconstructor)) as stream:
+            async for payload in stream:
+                if isinstance(payload, dict):
+                    await ws.send_json(payload)
+                else:
+                    await ws.send_bytes(payload)
     except WebSocketDisconnect:
         pass
+    except Exception as error:
+        print("D4RT STREAM ERROR", type(error).__name__, error, flush=True)
+        with suppress(RuntimeError):
+            await ws.close(code=4500, reason=str(error)[:120])
     finally:
-        D4RT.remove_client(ws)
+        session.stop()
+        if reader is not None:
+            reader.cancel()
+            with suppress(asyncio.CancelledError):
+                await reader
+
+
+@app.get("/api/local/d4rt-world")
+async def d4rt_world():
+    # the current source's static world as one binary document: header + int16 xyz +
+    # uint8 labels + uint16 spread. Fetched once by the viewer when a clip is chosen;
+    # 404 until the stream socket has built it (it is built on first d4rt connect).
+    clip_id = Path(str(LIVE.current_source())).stem
+    scene = D4RT.scene(clip_id)
+    world = getattr(scene, "world", None) if scene is not None else None
+    if world is None:
+        return JSONResponse({"error": f"no world for {clip_id} yet"}, status_code=404)
+    header = _WORLD_HEADER.pack(
+        int(world.grid_side),
+        int(world.xyz.shape[0]),
+        float(world.radius),
+        float(world.camera[0]),
+        float(world.camera[1]),
+        float(world.camera[2]),
+    )
+    return Response(
+        content=header + world.xyz.tobytes() + world.labels.tobytes() + world.spread.tobytes(),
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/live/source")

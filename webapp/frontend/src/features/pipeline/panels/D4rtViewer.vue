@@ -1,119 +1,99 @@
-<!-- Concern: render the live D4RT point cloud in three.js with orbit controls | Non-concern: the websocket/wire format (useD4rtStream owns), mode selection (RawRgbPanel owns) | IO: (enabled) -> canvas -->
+<!-- Concern: render the live D4RT reconstruction — the static world + moving blobs as a MODEL when locked, the raw point cloud when a hazard unlocks it | Non-concern: the socket/wire format (useLiveCloudStream owns), the scene's GPU resources (LiveCloudCanvas owns), the unlock decision (backend firewall owns) | IO: (enabled, unlocked) -> canvas -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { useD4rtStream, type PointCloud } from '@/composables/useD4rtStream'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 
-const props = defineProps<{ enabled: boolean }>()
-const { connected, latest } = useD4rtStream(computed(() => props.enabled))
-const hasCloud = computed(() => latest.value !== null)
+import LiveCloudCanvas from '@/components/cloud/LiveCloudCanvas.vue'
+import type { LiveView } from '@/components/cloud/useLiveCloudScene'
+import { decodeStaticWorld, type StaticWorld } from '@/cloud/staticWorld'
+import { useLiveCloudStream } from '@/cloud/useLiveCloudStream'
+import { d4rtWorldUrl, d4rtWsUrl } from '@/api/config'
 
-const container = ref<HTMLElement | null>(null)
+const props = defineProps<{
+  enabled: boolean
+  // the backend firewall's decision, mirrored from rgb-stream: false = obfuscated
+  // (show the reconstructed MODEL), true = hazard (reveal the raw point cloud).
+  unlocked?: boolean
+}>()
 
-let renderer: THREE.WebGLRenderer | null = null
-let scene: THREE.Scene | null = null
-let camera: THREE.PerspectiveCamera | null = null
-let controls: OrbitControls | null = null
-let geometry: THREE.BufferGeometry | null = null
-let material: THREE.PointsMaterial | null = null
-let raf = 0
-let resizeObs: ResizeObserver | null = null
-let capacity = 0
+// null url means "do not connect"; the stream reconnects whenever the url flips to a value
+const url = computed(() => (props.enabled ? d4rtWsUrl() : null))
+const stream = useLiveCloudStream(url)
 
-function initThree(): void {
-  const el = container.value
-  if (!el) return
-  const w = el.clientWidth || 1
-  const h = el.clientHeight || 1
+// the socket is self-describing: numPoints/gridSide/classNames arrive in the hello
+// before any frame, so the canvas is only built once that fixed capacity is known
+const numPoints = computed(() => stream.info.value?.numPoints ?? 0)
+const hasFrame = computed(() => stream.frame.value !== null)
 
-  scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x0b0f14)
+// Phase B: the D4RT tab mimics the main feed — the model while obfuscated, the
+// point cloud once a hazard makes the raw geometry available.
+const view = computed<LiveView>(() => (props.unlocked ? 'points' : 'model'))
 
-  camera = new THREE.PerspectiveCamera(60, w / h, 0.001, 100)
-  camera.position.set(0, 0, 2.6)
+const world = shallowRef<StaticWorld | null>(null)
+const glError = ref<string | null>(null)
+// bumped on connect and on a view switch, so the camera reframes rather than
+// keeping an orbit that suited the other mode
+const resetToken = ref(0)
 
-  renderer = new THREE.WebGLRenderer({ antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  renderer.setSize(w, h)
-  el.appendChild(renderer.domElement)
-
-  controls = new OrbitControls(camera, renderer.domElement)
-  controls.enableDamping = true
-  controls.target.set(0, 0, 0)
-
-  geometry = new THREE.BufferGeometry()
-  material = new THREE.PointsMaterial({ size: 0.012, vertexColors: true, sizeAttenuation: true })
-  scene.add(new THREE.Points(geometry, material))
-
-  resizeObs = new ResizeObserver(onResize)
-  resizeObs.observe(el)
-
-  const animate = (): void => {
-    raf = requestAnimationFrame(animate)
-    controls?.update()
-    if (renderer && scene && camera) renderer.render(scene, camera)
+// The world is built lazily on the backend the first time a client connects, so
+// the first fetch usually 404s. Keep asking until it lands; once it has, it never
+// changes for the life of the clip.
+let worldTimer: ReturnType<typeof setTimeout> | undefined
+async function fetchWorld(): Promise<boolean> {
+  try {
+    const res = await fetch(d4rtWorldUrl(), { cache: 'no-store' })
+    if (!res.ok) return false
+    world.value = decodeStaticWorld(await res.arrayBuffer())
+    return true
+  } catch {
+    return false
   }
-  animate()
+}
+function pollWorld(): void {
+  void fetchWorld().then((ok) => {
+    if (!ok && props.enabled) worldTimer = setTimeout(pollWorld, 2500)
+  })
 }
 
-function updateCloud(cloud: PointCloud): void {
-  if (!geometry) return
-  if (cloud.count > capacity) {
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cloud.count * 3), 3))
-    geometry.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(cloud.count * 3), 3, true))
-    capacity = cloud.count
-  }
-  const pos = geometry.getAttribute('position') as THREE.BufferAttribute
-  const col = geometry.getAttribute('color') as THREE.BufferAttribute
-  ;(pos.array as Float32Array).set(cloud.positions)
-  ;(col.array as Uint8Array).set(cloud.colors)
-  pos.needsUpdate = true
-  col.needsUpdate = true
-  geometry.setDrawRange(0, cloud.count)
-}
-
-function onResize(): void {
-  const el = container.value
-  if (!renderer || !camera || !el) return
-  const w = el.clientWidth || 1
-  const h = el.clientHeight || 1
-  camera.aspect = w / h
-  camera.updateProjectionMatrix()
-  renderer.setSize(w, h)
-}
+watch(view, () => (resetToken.value += 1))
+watch(numPoints, (n, prev) => {
+  if (n > 0 && prev === 0) resetToken.value += 1
+})
 
 onMounted(() => {
-  initThree()
-  if (latest.value) updateCloud(latest.value)
+  if (props.enabled) pollWorld()
 })
-
-watch(latest, (cloud) => {
-  if (cloud) updateCloud(cloud)
-})
-
 onUnmounted(() => {
-  if (raf) cancelAnimationFrame(raf)
-  resizeObs?.disconnect()
-  controls?.dispose()
-  geometry?.dispose()
-  material?.dispose()
-  if (renderer) {
-    renderer.dispose()
-    renderer.domElement.remove()
-  }
-  renderer = scene = camera = null
-  controls = null
-  geometry = null
-  material = null
+  if (worldTimer) clearTimeout(worldTimer)
+})
+
+function onUnsupported(message: string): void {
+  glError.value = message
+}
+
+const hint = computed(() => {
+  if (glError.value) return glError.value
+  if (stream.error.value) return stream.error.value
+  if (stream.status.value === 'connecting') return 'Connecting…'
+  if (!hasFrame.value) return 'Reconstructing… (building the world on first view)'
+  return null
 })
 </script>
 
 <template>
-  <div ref="container" class="viewer">
-    <div v-if="!hasCloud" class="viewer__hint">
-      {{ connected ? 'Reconstructing… (loading model on first view — ~1 min)' : 'Connecting…' }}
-    </div>
+  <div class="viewer">
+    <LiveCloudCanvas
+      v-if="numPoints > 0 && !glError"
+      :num-points="numPoints"
+      :frame="stream.frame.value"
+      color-mode="rgb"
+      :show-ground="true"
+      :world="world"
+      :view="view"
+      :reset-token="resetToken"
+      class="viewer__canvas"
+      @unsupported="onUnsupported"
+    />
+    <div v-if="hint" class="viewer__hint">{{ hint }}</div>
   </div>
 </template>
 
@@ -125,8 +105,9 @@ onUnmounted(() => {
   overflow: hidden;
   background: #0b0f14;
 }
-.viewer :deep(canvas) {
-  display: block;
+.viewer__canvas {
+  width: 100%;
+  height: 100%;
 }
 .viewer__hint {
   position: absolute;
@@ -138,5 +119,7 @@ onUnmounted(() => {
   font-size: var(--text-xs);
   letter-spacing: 0.03em;
   pointer-events: none;
+  text-align: center;
+  padding: 0 var(--space-4);
 }
 </style>
