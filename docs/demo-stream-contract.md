@@ -118,3 +118,14 @@ The hub consumes COCO at `OMODA_COCO_BASE` (`http://100.71.143.26:8091`):
 `/api/local/rgb-stream` and `/api/observability` over WebSocket with reconnect
 and backoff, and `GET /api/describe?prompt=...` as a declared, ledgered read
 capability (`coco.describe`).
+
+
+## Take-action triggers (admin-editable)
+
+L0 checks every observation's text (description, question, answer) against a
+curated phrase list in the ingest layer BEFORE any inference. A phrase hit routes
+straight to the mapped L1 domain agent, deterministically, no model call. Text
+that matches no phrase and shows no other signal is ignored; anything ambiguous
+goes to the model to infer from the known agent skills. The operator curates the
+phrases and their L1 targets at `/ui/triggers`, and uploads reference documents
+at `/ui/knowledge`. Both are admin-portal pages behind Basic auth.

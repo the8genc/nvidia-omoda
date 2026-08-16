@@ -66,6 +66,7 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
           h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
           h("a", { href: "/ui/knowledge", className: active === "knowledge" ? "on" : "" }, "Knowledge"),
+          h("a", { href: "/ui/triggers", className: active === "triggers" ? "on" : "" }, "Triggers"),
         ),
       ),
       h("main", null, children),
@@ -258,6 +259,51 @@ export function KnowledgePage({ csrf, docs = [], backend = "lexical", error = nu
           ),
         )),
       ),
+  );
+}
+
+export function TriggersPage({ csrf, rules = [], l1Agents = [], error = null, added = null }) {
+  return h(Layout, { title: "triggers", active: "triggers" },
+    h("h2", null, "Take-action triggers  ", pill(`${rules.length} rule(s)`, "dim")),
+    h("p", { className: "note" },
+      "L0 checks every observation's text against these phrases first, deterministically. ",
+      "A hit routes straight to the named L1 agent, no inference. Text that matches nothing ",
+      "and shows no other signal is ignored; anything ambiguous goes to the model to infer."),
+    error ? h("div", { className: "err" }, error) : null,
+    added ? h("div", { className: "okbox" }, `Added a trigger for "${added}".`) : null,
+    rules.length === 0
+      ? h("div", { className: "empty" }, "No triggers configured.")
+      : h("table", null,
+        h("thead", null, h("tr", null, ["Phrases", "Incident", "Routes to (L1)", "Action", ""].map((c) => h("th", { key: c }, c)))),
+        h("tbody", null, rules.map((r) =>
+          h("tr", { key: r.id },
+            h("td", null, r.phrases.map((p) => h("span", { key: p }, pill(p, "warn"), " "))),
+            h("td", { className: "mono" }, r.incidentType),
+            h("td", null, pill(r.l1, "dim")),
+            h("td", null, r.action || "-"),
+            h("td", null,
+              h("form", { className: "inline", method: "POST", action: "/ui/triggers/delete" },
+                h("input", { type: "hidden", name: "csrf", value: csrf }),
+                h("input", { type: "hidden", name: "id", value: r.id }),
+                h("button", { type: "submit", className: "deny" }, "Remove"))),
+          ),
+        )),
+      ),
+    h("h2", { style: { marginTop: 28 } }, "Add a trigger"),
+    h("form", { className: "stack", method: "POST", action: "/ui/triggers" },
+      h("input", { type: "hidden", name: "csrf", value: csrf }),
+      h("label", null, "Phrases (comma-separated; a match on any routes to the L1 below)"),
+      h("input", { type: "text", name: "phrases", required: true, placeholder: "overturned, rollover, vehicle on its side" }),
+      h("label", null, "Incident type"),
+      h("input", { type: "text", name: "incidentType", placeholder: "traffic-accident" }),
+      h("label", null, "Routes to L1 agent"),
+      h("select", { name: "l1" }, l1Agents.map((a) => h("option", { key: a, value: a }, a))),
+      h("label", null, "Action (what that L1 coordinates)"),
+      h("input", { type: "text", name: "action", placeholder: "coordinate the accident response" }),
+      h("button", { type: "submit" }, "Add trigger"),
+    ),
+    h("p", { className: "note" },
+      "Stored in the ingest layer and read on every frame. The L1 you choose decides downstream via inference; dangerous steps are gated by OpenShell."),
   );
 }
 

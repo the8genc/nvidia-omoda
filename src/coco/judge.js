@@ -127,6 +127,10 @@ export function createObservationJudge({
   localAvailable = () => true,
   clearAfterQuiet = 3,
   now = () => Date.now(),
+  // The ingest-layer take-action triggers (src/transport/triggers.js). A phrase
+  // hit routes deterministically, no detection inference; text with no trigger
+  // and no structured signal is ignored, protecting COCO's shared model.
+  triggers = null,
 } = {}) {
   if (!intents) throw new Error("judge requires the intent store");
 
@@ -177,6 +181,14 @@ export function createObservationJudge({
     stats.observations += 1;
     const signals = candidateSignals(obs);
 
+    // The take-action triggers are the ingest layer's quick reference: match the
+    // observation text (description, question) against the curated phrase list.
+    // A hit is a deterministic candidate that carries its own incident type, so
+    // it routes without a detection inference call.
+    const text = [obs.scene_description, obs.followup_question].filter(Boolean).join(". ");
+    const hit = triggers?.match(text) ?? null;
+    if (hit) signals.push(`trigger:${hit.matchedPhrase}`);
+
     // Quiet observation: advance clearance on any open incidents for this camera.
     if (signals.length === 0) {
       for (const [key, state] of open) {
@@ -200,10 +212,19 @@ export function createObservationJudge({
       return { verdict: "candidate-skipped-busy", signals };
     }
 
-    inFlight = true;
+    // Deterministic fast path: a trigger phrase names the incident type outright,
+    // so L0 routes to the mapped L1 with no detection inference. The L1 still
+    // uses inference downstream to decide what to do; this only skips the
+    // "is it an incident and of what kind" call the model would otherwise make.
     let j;
-    try { j = await judgeCandidate(obs, context, signals); }
-    finally { inFlight = false; }
+    if (hit) {
+      j = { is_incident: true, incident_type: hit.rule.incidentType, severity: "unranked", reason: `take-action trigger matched: "${hit.matchedPhrase}"`, cleared: false, deterministic: true };
+      record({ tool: "judge.trigger", verb: "read", outcome: "matched", reason: `${hit.matchedPhrase} -> ${hit.rule.incidentType}` });
+    } else {
+      inFlight = true;
+      try { j = await judgeCandidate(obs, context, signals); }
+      finally { inFlight = false; }
+    }
 
     if (!j.is_incident || j.incident_type === "none") {
       record({ tool: "judge.infer", verb: "read", outcome: "nominal-after-judgment", reason: j.reason?.slice(0, 160) });

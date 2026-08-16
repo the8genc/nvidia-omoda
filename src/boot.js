@@ -20,6 +20,7 @@ import { createTelegramLoop } from "./channels/telegram-loop.js";
 import { createModalityTransform } from "./channels/modality.js";
 import { createInferenceClient } from "./models/client.js";
 import { createKnowledgeStore, createNemotronEmbedder } from "./knowledge/store.js";
+import { createTriggerStore } from "./transport/triggers.js";
 import { createOrchestrator } from "./orchestrator.js";
 import { createUndoStore } from "./broker/undo.js";
 import { createCocoAdapter } from "./coco/adapter.js";
@@ -109,6 +110,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     // away.
     onAppend: (rec) => bus.publish("agent", narrateEntry(rec, levelMap)),
   });
+  // The ingest-layer take-action triggers, editable from the admin portal.
+  const triggers = createTriggerStore({ path: process.env.OMODA_TRIGGERS ?? "var/triggers.json", ledger });
   // A deployment with a single operator identity cannot satisfy a two-person
   // rule; the store fails those closed rather than accept one tap. The operator
   // allowlist is the source of truth for how many distinct deciders exist.
@@ -140,7 +143,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   // first, inference only when signals fire) and routing to an L1 domain agent,
   // and routing every proposed intent to a declared capability awaiting consent.
   // The judge is L0's detection engine, created once and shared.
-  const judge = createObservationJudge({ intents, ledger });
+  const judge = createObservationJudge({ intents, ledger, triggers });
   const orchestrator = createOrchestrator({
     intents, registry: index, ledger, knowledge, judge, bus, levelMap,
     localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
@@ -154,6 +157,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, registry: s.registry })),
     uiOperator: operator,
     knowledge,
+    triggers,
+    l1Agents: [...new Set(skills.filter((sk) => sk.level === 1).map((sk) => sk.agent))],
   });
 
   const ingest = createStreamIngest({ tokens, intents, ledger });
@@ -239,6 +244,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
+    line(`  triggers ${triggers.size} take-action rule(s) in the ingest layer; edit at /ui/triggers`);
     line(`  L0      live: reviews every frame (deterministic + inference), routes to an L1 agent, and routes intents to capabilities`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
@@ -261,7 +267,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus, orchestrator, undo,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus, orchestrator, undo, triggers,
     async close() {
       telegram?.stop();
       upstream?.stop();

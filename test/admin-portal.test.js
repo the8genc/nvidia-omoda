@@ -9,6 +9,8 @@ import { createLedger } from "../src/ledger/ledger.js";
 import { createIntentStore } from "../src/api/intents.js";
 import { checkAdminAuth, DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASS } from "../src/web/admin-auth.js";
 import { loadSkills } from "../src/skills/load.js";
+import { createTriggerStore } from "../src/transport/triggers.js";
+const mkTriggers = () => createTriggerStore({ path: join(mkdtempSync(join(tmpdir(), "omoda-t-")), "t.json") });
 
 const basic = (u, p) => "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
 const ADMIN = basic(DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASS);
@@ -18,12 +20,14 @@ function harness(t) {
   t.after(() => rmSync(skillsDir, { recursive: true, force: true }));
   const applied = [];
   const ledger = createLedger({ path: `/tmp/omoda-portal-${Date.now()}-${Math.random()}.jsonl` });
+  const triggers = mkTriggers();
   const app = createApp({
     tokens: createTokenStore(), ledger, intents: createIntentStore(),
     skillsDir, onApply: () => applied.push(true),
     uiOperator: { id: "operator:arif", scopes: ["intent:decide"] },
+    triggers, l1Agents: ["accident", "fire"],
   });
-  return { app, skillsDir, applied, ledger };
+  return { app, skillsDir, applied, ledger, triggers };
 }
 
 async function req(app, { method = "GET", path, auth = ADMIN, form }) {
@@ -176,4 +180,30 @@ test("an L0 orchestrator deploys with inference and no capabilities", async (t) 
   const { skills } = loadSkills(skillsDir);
   assert.equal(skills[0].grants.inference, true);
   assert.equal(skills[0].grants.tools, "none");
+});
+
+test("the triggers page lists rules and requires the admin credential", async (t) => {
+  const { app } = harness(t);
+  assert.equal((await req(app, { path: "/ui/triggers", auth: null })).status, 401);
+  const r = await req(app, { path: "/ui/triggers" });
+  assert.equal(r.status, 200);
+  assert.match(r.body, /take-action trigger/i);
+});
+
+test("an admin can add a trigger through the portal", async (t) => {
+  const { app, triggers } = harness(t);
+  const csrf = (await req(app, { path: "/ui/triggers" })).body.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  const before = triggers.size;
+  const r = await req(app, { method: "POST", path: "/ui/triggers", form: { csrf, phrases: "rollover, overturned", incidentType: "traffic-accident", l1: "accident", action: "handle it" } });
+  assert.equal(r.status, 200);
+  assert.equal(triggers.size, before + 1);
+  assert.equal(triggers.match("an overturned car").rule.l1, "accident");
+});
+
+test("a forged csrf cannot edit triggers", async (t) => {
+  const { app, triggers } = harness(t);
+  const before = triggers.size;
+  const r = await req(app, { method: "POST", path: "/ui/triggers", form: { csrf: "bad", phrases: "x", l1: "accident" } });
+  assert.equal(r.status, 403);
+  assert.equal(triggers.size, before);
 });
