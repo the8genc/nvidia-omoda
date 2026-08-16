@@ -49,7 +49,7 @@ test("all doors produce the same canonical envelope shape", async () => {
     const dialer = createUpstreamDialer({
       url: "ws://x", ingest, identity: dial, WebSocketImpl: function () { return { on() {} }; },
     });
-    const r = dialer.handleMessage(JSON.stringify({ kind: "detection", detector: "d2", evidence: {}, requested_outcome: "y" }));
+    const r = await dialer.handleMessage(JSON.stringify({ kind: "detection", detector: "d2", evidence: {}, requested_outcome: "y" }));
     envelopes.push(intents.get(r.intentId).envelope);
   }
 
