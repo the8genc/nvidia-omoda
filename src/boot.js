@@ -20,11 +20,18 @@ import { createTelegramLoop } from "./channels/telegram-loop.js";
 import { createModalityTransform } from "./channels/modality.js";
 import { createInferenceClient } from "./models/client.js";
 import { createKnowledgeStore, createNemotronEmbedder } from "./knowledge/store.js";
+import { createTriggerStore } from "./transport/triggers.js";
+import { createTrainingRecorder } from "./training/recorder.js";
+import { createOrchestrator } from "./orchestrator.js";
+import { createUndoStore } from "./broker/undo.js";
+import { authorize } from "./broker/authorize.js";
 import { createCocoAdapter } from "./coco/adapter.js";
 import { createObservationJudge } from "./coco/judge.js";
 import { createCocoLive } from "./coco/live.js";
 import { createBus } from "./bus.js";
 import { createAgenticTelemetry, setGlobalTelemetry } from "./telemetry/agentic.js";
+import { skillLevelMap } from "./telemetry/display.js";
+import { isAuditWorthy, ledgerToAudit } from "./telemetry/audit.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -95,15 +102,35 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const bus = createBus();
   // Every instrumented module narrates onto /v1/out/agentic from here on.
   setGlobalTelemetry(createAgenticTelemetry({ bus }));
+  // agent-name -> level, so the compact agent-action stream can label each hop.
+  const levelMap = skillLevelMap(skills);
   const ledger = createLedger({
     path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl",
-    onAppend: (rec) => bus.publish("agent", { entry: rec }),
+    // The agent-action stream (/v1/out/agents) now carries trigger-driven routing
+    // events (agent routed to, incident, action), published by the orchestrator.
+    // The ledger feeds the AUDIT stream, the eight-field projection filtered to the
+    // triggered response chain; the full hash-chained record is on /ui/audit.
+    onAppend: (rec) => {
+      if (isAuditWorthy(rec)) bus.publish("audit", ledgerToAudit(rec, levelMap));
+    },
   });
+  // The ingest-layer take-action triggers, editable from the admin portal.
+  const triggers = createTriggerStore({ path: process.env.OMODA_TRIGGERS ?? "var/triggers.json", ledger });
+  // Durable training capture: an admin button records labeled descriptions from
+  // the live stream to var/training/ for tuning the triggers.
+  const training = createTrainingRecorder({ bus, triggers, dir: process.env.OMODA_TRAINING_DIR ?? "var/training" });
   // A deployment with a single operator identity cannot satisfy a two-person
   // rule; the store fails those closed rather than accept one tap. The operator
   // allowlist is the source of truth for how many distinct deciders exist.
   const operatorCount = (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
-  const intents = createIntentStore({ singleOperator: operatorCount <= 1 });
+  // L0 is wired into the intake: a deferred ref so the store can be created
+  // before the orchestrator (which needs the registry and retrieval store).
+  let routeIntent = null;
+  const intents = createIntentStore({
+    singleOperator: operatorCount <= 1,
+    onPropose: (intent) => routeIntent?.(intent),
+  });
+  const undo = createUndoStore({ ledger });
 
   // The proxy layer's retrieval store (PRD 23.2). NeMo Retriever embeddings
   // when the on-box embed server answers; lexical otherwise, labeled as such.
@@ -118,13 +145,115 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   });
   knowledge.backend = embedder ? embedder.name : "lexical (embed server down)";
 
+  // L0 stands up here, now the registry and retrieval store exist. It owns two
+  // things: reviewing every frame description off the stream (deterministic
+  // first, inference only when signals fire) and routing to an L1 domain agent,
+  // and routing every proposed intent to a declared capability awaiting consent.
+  // The judge is L0's detection engine, created once and shared.
+  const judge = createObservationJudge({ intents, ledger, triggers });
+  // Set once the Telegram client exists (below); the orchestrator calls it when a
+  // routed action needs consent, so a dangerous path actually reaches the phone.
+  let escalateToOperator = null;
+  const orchestrator = createOrchestrator({
+    intents, registry: index, ledger, knowledge, judge, bus, levelMap,
+    localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
+    // The hosted planner needs an API key. On a host deployment the key is not
+    // brokered in (that happens inside the sandbox), so treat hosted as
+    // unavailable when no key is set and let the router fall back to the local
+    // Omni that is already loaded. Otherwise the planner 401s and nothing routes.
+    hostedAvailable: () => Boolean(process.env.OMODA_HOSTED_KEY || process.env.NVIDIA_API_KEY),
+    onEscalate: (args) => escalateToOperator?.(args),
+  });
+  routeIntent = (intent) => orchestrator.onIntent(intent);
+
+  // The method a verb compiles to, so the request the Broker governs and the
+  // executor's call agree with what the policy delta materialises.
+  const METHOD_FOR_VERB = { read: "GET", create: "POST", update: "PUT", delete: "DELETE" };
+  const requestFor = (row) => row?.egress
+    ? { host: row.egress.host, port: row.egress.port ?? 443, method: METHOD_FOR_VERB[row.verb] ?? "POST", path: row.egress.path ?? "/" }
+    : undefined;
+
+  // The executor: once a decision materialises the write method, actually reach
+  // the service layer so the demo shows the real effect (a call_id, a work order).
+  async function executeAction(action) {
+    const req = action.request ?? requestFor(index.lookup(action.tool));
+    if (!req?.host) return { ok: true, note: "local action, no egress" };
+    const path = String(req.path).replace(/\/\*\*$/, "").replace(/\/\*$/, "") || "/";
+    const url = `http://${req.host}:${req.port ?? 3120}${path}`;
+    const withBody = req.method !== "GET" && req.method !== "DELETE";
+    try {
+      const res = await fetch(url, {
+        method: req.method,
+        headers: withBody ? { "content-type": "application/json" } : {},
+        body: withBody ? JSON.stringify({ demo: true, tool: action.tool, intentId: action.intentId }) : undefined,
+        signal: AbortSignal.timeout(6000),
+      });
+      const result = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, result };
+    } catch (err) {
+      return { ok: false, error: String(err.message).slice(0, 120) };
+    }
+  }
+  const executeInverse = async () => ({ ok: true, note: "demo inverse: no-op" });
+
+  // The tap-to-execute half: on a SETTLED approval, run the approved action
+  // through the Broker with the operator's decision, so the audit trail shows the
+  // full arc, capability materialises -> executed -> reverted, and the service
+  // layer is actually called. A denial or an unsettled two-person tap does not
+  // execute; the decision itself already reached the streams from the loop.
+  async function onApproved({ action, decision }) {
+    try {
+      return await authorize(action, { ledger, policy, decision, execute: executeAction, undo, executeInverse });
+    } catch (err) {
+      try { ledger.append({ kind: "decision", agent: "broker", tool: action.tool, verb: action.verb, impact: action.impact ?? [], outcome: "execute-failed", reason: String(err.message).slice(0, 160), intentId: action.intentId }); } catch { /* best effort */ }
+      return { ok: false };
+    }
+  }
+
+  // Demo control: fire a chosen gated tool through the REAL escalation path so a
+  // presenter can show the human gate (a Telegram Approve/Deny) on demand. It
+  // uses the same intent store and escalation hook as a live incident, so the
+  // operator's tap flows back through the normal decide path. Admin-gated.
+  const demo = {
+    configured: () => Boolean(escalateToOperator),
+    gatedTools: () => index.all()
+      .filter((r) => r.consent && r.consent !== "none")
+      .map((r) => ({ tool: r.tool, verb: r.verb, impact: r.impact ?? [], consent: r.consent, agent: r.agent }))
+      .sort((a, b) => a.tool.localeCompare(b.tool)),
+    async trigger(toolName) {
+      if (!escalateToOperator) return { ok: false, reason: "Telegram is not configured (set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_IDS)" };
+      const row = index.lookup(toolName);
+      if (!row) return { ok: false, reason: `unknown tool "${toolName}"` };
+      if (!row.consent || row.consent === "none") return { ok: false, reason: `"${toolName}" is not a gated action; pick one that requires consent` };
+      const { intent } = intents.propose({
+        idempotencyKey: `demo-${toolName}-${Date.now()}`,
+        caller: { id: "admin:demo", scopes: ["intent:propose"] },
+        body: { source: "admin-demo", kind: "demo", detector: "admin dashboard (demo)", requested_outcome: `DEMO dangerous action: ${toolName}` },
+      });
+      const action = {
+        actionId: `demo-${Date.now().toString(36)}`, intentId: intent.id,
+        agent: row.agent, tool: row.tool, verb: row.verb, impact: row.impact ?? [],
+        declared: true, reason: "admin demo: exercise the human gate",
+        request: requestFor(row),   // so the decision can materialise + execute it
+      };
+      intents.awaitConsent(intent.id, action);
+      try { ledger.append({ kind: "demo", agent: "admin:demo", tool: row.tool, verb: row.verb, impact: row.impact ?? [], intentId: intent.id, outcome: "escalated", reason: `demo escalation -> ${row.consent}` }); } catch { /* best effort */ }
+      await escalateToOperator({ intent, action });
+      return { ok: true, tool: row.tool, consent: row.consent, intentId: intent.id };
+    },
+  };
+
   const app = createApp({
     tokens, ledger, intents,
     nonces: createNonceCache(),
     limiter: createRateLimiter({ capacity: 120, refillPerSec: 2 }),
-    skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, registry: s.registry })),
+    skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, level: s.level, registry: s.registry })),
     uiOperator: operator,
     knowledge,
+    triggers,
+    training,
+    demo,
+    l1Agents: [...new Set(skills.filter((sk) => sk.level === 1).map((sk) => sk.agent))],
   });
 
   const ingest = createStreamIngest({ tokens, intents, ledger });
@@ -148,9 +277,11 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     // and the Observation Judge take the frames (PRD section 24).
     let handleRaw = null;
     if ((process.env.OMODA_STREAM_FORMAT ?? "").toLowerCase() === "coco") {
-      const judge = createObservationJudge({ intents, ledger });
-      coco = createCocoAdapter({ judge, ledger });
-      coco.judge = judge;
+      // L0 is the frame reviewer: every COCO observation goes through the
+      // orchestrator (deterministic first, inference when signals fire), which
+      // routes to an L1 domain agent.
+      coco = createCocoAdapter({ judge: orchestrator, ledger });
+      coco.judge = orchestrator;
       handleRaw = coco.handleMessage;
     }
     upstream = createUpstreamDialer({
@@ -166,9 +297,8 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const cocoBase = process.env.OMODA_COCO_BASE;
   if (cocoBase) {
     const { WebSocket } = await import("ws");
-    const liveJudge = coco?.judge ?? createObservationJudge({ intents, ledger });
     cocoLive = createCocoLive({
-      base: cocoBase, judge: liveJudge, bus, ledger, WebSocketImpl: WebSocket,
+      base: cocoBase, judge: orchestrator, bus, ledger, WebSocketImpl: WebSocket,
       onLog: (m) => console.log(`  coco    ${m}`),
     });
     cocoLive.start();
@@ -195,8 +325,15 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     const mediaTransform = createModalityTransform({
       transport, token: tgToken, inference: createInferenceClient({ timeoutMs: 180_000 }),
     });
-    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport, mediaTransform });
+    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, bus, policy, operator, transport, mediaTransform, undo, onApproved });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
+    // Close the human gate: when L0 routes a dangerous action, send the operator
+    // an Approve/Deny message on the first allowed chat. Inbound taps are already
+    // handled by the loop above; this is the outbound half that was missing.
+    const operatorChat = tgIds[0];
+    escalateToOperator = async ({ intent, action }) => {
+      await telegramClient.escalate({ chatId: operatorChat, intent, action });
+    };
   }
 
   if (print) {
@@ -206,9 +343,13 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}${coco ? " (coco adapter + judge)" : ""}` : ""}`);
-    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
+    line(`  outputs ws://${streamHost}:${streamPort}/v1/out/{frames,observations,agents,agentic,audit}${cocoBase ? ` fed by ${cocoBase}` : " (bus only until OMODA_COCO_BASE is set)"}`);
+    line(`  audit   condensed stream on /v1/out/audit; full record at http://${host}:${port}/ui/audit (admin)`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
+    line(`  triggers ${triggers.size} take-action rule(s) in the ingest layer; edit at /ui/triggers`);
+    line(`  training capture at /ui/training (records labeled descriptions to var/training/)`);
+    line(`  L0      live: reviews every frame (deterministic + inference), routes to an L1 agent, and routes intents to capabilities`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
     line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
@@ -230,7 +371,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, viewer, telegram, telegramClient, upstream, knowledge, coco, cocoLive, bus, orchestrator, undo, triggers,
     async close() {
       telegram?.stop();
       upstream?.stop();

@@ -50,6 +50,14 @@ export async function authorize(action = {}, ctx = {}) {
     impact: action.impact ?? [],
     argsHash: hashArgs(action.args),
     actionId: action.actionId ?? null,
+    // Robust audit linkage: every broker row is tied to the incident that caused
+    // it, and to the concrete external call it governs, so a human reviewing the
+    // audit DB can reconstruct a whole response and see exactly what was reached.
+    ...(action.intentId ? { intentId: action.intentId } : {}),
+    ...(action.resource ? { resource: action.resource } : {}),
+    ...(action.request
+      ? { target: `${action.request.method ?? ""} ${action.request.host ?? ""}${action.request.path ?? ""}`.trim() }
+      : {}),
   };
 
   // Best-effort record. A refusal must still be evidence, but a ledger failure
@@ -104,7 +112,9 @@ export async function authorize(action = {}, ctx = {}) {
     }
     const out = await execute(action);
     record({ tier, authority: "envelope", outcome: "executed", ofSeq: entry.seq });
-    return executed(tier, "envelope", { ledgerSeq: entry.seq, result: out, undoToken: action.inverse ? entry.hash.slice(0, 12) : null });
+    const undoToken = action.inverse ? entry.hash.slice(0, 12) : null;
+    if (undoToken) ctx.undo?.register({ token: undoToken, action, inverse: action.inverse, replay: ctx.executeInverse });
+    return executed(tier, "envelope", { ledgerSeq: entry.seq, result: out, undoToken });
   }
 
   // 4c. Consequential writes. The capability does not exist yet.
@@ -137,10 +147,13 @@ export async function authorize(action = {}, ctx = {}) {
       ofSeq: entry.seq,
       decidedBy: ctx.decision.decidedBy,
     });
+    const undoToken = action.inverse ? entry.hash.slice(0, 12) : null;
+    if (undoToken) ctx.undo?.register({ token: undoToken, action, inverse: action.inverse, replay: ctx.executeInverse });
     return executed(tier, `decision:${ctx.decision.decisionId}`, {
       ledgerSeq: entry.seq,
       result: out,
       deltaApplied: true,
+      undoToken,
     });
   } finally {
     // Guaranteed revert. A failed revert is an incident, not a log line.

@@ -17,8 +17,9 @@ case the outputs are ever locked again (`outputs.open` in boot).
 |---|---|---|
 | `/v1/out/frames` | video frame | `{topic:"frame", at, seq, index, rgb}` where `rgb` is the JPEG data URI relayed verbatim from COCO |
 | `/v1/out/observations` | COCO description | `{topic:"observation", at, source, description, prompt, followup, danger_signal, verdict, intentId?, incidentType?, severity?, signals?}` |
-| `/v1/out/agents` | ledgered action | `{topic:"agent", at, entry}` where `entry` is the full hash-chained ledger record: seq, agent, tool, verb, tier, outcome, authority, intentId, hash |
+| `/v1/out/agents` | agent action | `{topic:"agent", at, agentRoutedTo, incident, action, trigger, intentId}` — one event per trigger-driven routing (see below) |
 | `/v1/out/agentic` | agentic event | `{topic:"agentic", at, event, correlationId, actor, target?, intentId?, detail}` — the fine-grained narration stream, catalog below |
+| `/v1/out/audit` | audit record | the agentic audit trail, eight fields per engagement; see `docs/audit-stream.md` |
 
 ## What the observation verdicts mean
 
@@ -29,18 +30,41 @@ case the outputs are ever locked again (`outputs.open` in boot).
 - `candidate-skipped-busy`: a candidate arrived while a judgment was in flight;
   recorded and skipped so OMODA never queues behind COCO's captioning.
 
-## What the agent stream shows
+## The agent-action stream (`/v1/out/agents`)
 
-Every action the platform records, as it lands: `judge.incident`,
-`judge.resolve`, broker admits and refusals (including `prohibited`),
-`telegram.decide`, `ui.agent.deploy`, gateway calls, `coco.describe` questions.
-The demo app renders this as the live "what are the agents doing" panel; the
-`tier` field (safe, contained, consequential, prohibited) is the color coding.
+One event per **trigger-driven routing**: when OMODA (L0) matches a take-action
+trigger and routes an incident to an L1 agent, it emits exactly what the trigger
+drove. Three fields carry the meaning, mapped straight from the take-action
+triggers list (`src/transport/triggers.js`):
+
+- **`agentRoutedTo`** — the L1 agent OMODA handed the incident to (e.g. `accident-agent`, `fire-agent`, `roadside`, `utility-agent`, `comms-agent`).
+- **`incident`** — the incident type (e.g. `traffic-accident`, `fire`, `utility-hazard`).
+- **`action`** — the action text from the trigger rule that fired (e.g. "coordinate the accident response (EMS, police)").
+
+Plus `trigger` (the phrase that matched, or `null` when the model detected the
+incident without a literal phrase) and `intentId` (groups it with the same
+incident on the audit trail).
+
+```
+{ topic:"agent", at, agentRoutedTo:"accident-agent", incident:"traffic-accident",
+  action:"coordinate the accident response (EMS, police)", trigger:"collision", intentId:"int_…" }
+{ topic:"agent", at, agentRoutedTo:"fire-agent", incident:"fire",
+  action:"coordinate the fire response (fire department, EMS)", trigger:"smoke", intentId:"int_…" }
+{ topic:"agent", at, agentRoutedTo:"utility-agent", incident:"utility-hazard",
+  action:"coordinate the infrastructure-hazard response (de-energize, gas shutoff)", trigger:"downed power line", intentId:"int_…" }
+```
+
+One event per NEW incident (not every frame of an ongoing one), and nothing for a
+quiet frame. The full agent-to-agent choreography, the governed tool calls, who
+approved, and the hash chain are on `/v1/out/audit` (condensed) and `/ui/audit`
+(the full record). This stream answers "which agent is on what, and why"; the
+audit trail is the record.
 
 ## The agentic narration stream (`/v1/out/agentic`)
 
-Where `/v1/out/agents` is the audit (durable, terse), this stream is the story:
-what the agents are deciding, saying to each other, and touching, as it happens.
+Where `/v1/out/agents` is the thin ticker and `/v1/out/audit` is the durable
+record, this stream is the story: what the agents are deciding, saying to each
+other, and touching, as it happens.
 The `event` field is a fixed catalog; new instrumentation only ADDS events, the
 envelope never changes shape, so the dashboard can build against this today:
 
@@ -83,3 +107,14 @@ The hub consumes COCO at `OMODA_COCO_BASE` (`http://100.71.143.26:8091`):
 `/api/local/rgb-stream` and `/api/observability` over WebSocket with reconnect
 and backoff, and `GET /api/describe?prompt=...` as a declared, ledgered read
 capability (`coco.describe`).
+
+
+## Take-action triggers (admin-editable)
+
+L0 checks every observation's text (description, question, answer) against a
+curated phrase list in the ingest layer BEFORE any inference. A phrase hit routes
+straight to the mapped L1 domain agent, deterministically, no model call. Text
+that matches no phrase and shows no other signal is ignored; anything ambiguous
+goes to the model to infer from the known agent skills. The operator curates the
+phrases and their L1 targets at `/ui/triggers`, and uploads reference documents
+at `/ui/knowledge`. Both are admin-portal pages behind Basic auth.

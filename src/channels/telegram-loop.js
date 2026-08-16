@@ -11,6 +11,7 @@ export function createTelegramLoop({
   client,
   intents,
   ledger,
+  bus = null,
   policy = null,
   operator,
   pollTimeoutSec = 25,
@@ -18,6 +19,12 @@ export function createTelegramLoop({
   // The v4 modality transform (src/channels/modality.js). Optional: without it
   // a voice note gets an honest "not configured" reply rather than silence.
   mediaTransform = null,
+  // The undo registry (src/broker/undo.js). UNDO replays the registered inverse
+  // through it; without it, UNDO honestly reports it cannot reverse.
+  undo = null,
+  // Called when an approval SETTLES (quorum met): runs the approved action
+  // through the Broker so the audit trail shows it execute and revert.
+  onApproved = null,
 }) {
   if (!client) throw new Error("telegram loop requires a client");
   if (!operator) throw new Error("telegram loop requires an operator identity");
@@ -56,12 +63,51 @@ export function createTelegramLoop({
           verdict: cmd.verdict, decidedBy: operator.id,
         });
       }
-      record({
-        tool: "telegram.decide",
-        outcome: out.ok ? "recorded" : "refused",
-        reason: out.ok ? cmd.verdict : out.reason,
+      // The operator's decision is a first-class audit event and must flow back
+      // to the streams: an escalation stuck at "awaiting approval" resolves here.
+      // Look up the action that was decided so the record names the real tool, not
+      // just "telegram.decide", and so the audit projection reads meaningfully.
+      const decided = out.ok
+        ? (intents.get(cmd.intentId)?.actions ?? []).find((a) => a.actionId === cmd.actionId) ?? null
+        : null;
+      const settledOutcome = out.ok
+        ? (out.decision?.settled === false ? "approved-partial" : (cmd.verdict === "approve" ? "approved" : "denied"))
+        : "refused";
+      // kind "decision" is audit-worthy (unlike kind "telegram"), so onAppend
+      // publishes it to /v1/out/audit; here we also push it to the agent stream.
+      const decisionEntry = {
+        kind: "decision",
+        agent: operator.id,
+        tool: decided?.tool ?? "telegram.decide",
+        verb: decided?.verb ?? "update",
+        impact: decided?.impact ?? [],
+        authority: `operator:${operator.id}`,
+        decidedBy: operator.id,
+        outcome: settledOutcome,
+        reason: out.ok ? `operator ${cmd.verdict}${out.decision?.settled === false ? " (1 of 2)" : ""}` : out.reason,
         intentId: cmd.intentId,
-      });
+      };
+      try { ledger.append({ verb: decisionEntry.verb, ...decisionEntry }); } catch { /* best effort */ }
+      if (bus && decided) {
+        const incident = intents.get(cmd.intentId)?.evidence?.incident_type ?? null;
+        try {
+          bus.publish("agent", {
+            agentRoutedTo: decided.agent ?? null,
+            incident,
+            action: decided.tool,
+            decision: settledOutcome,
+            by: operator.id,
+            intentId: cmd.intentId,
+          });
+        } catch { /* never break the loop on a publish */ }
+      }
+      // Settled approval: run it through the Broker so the audit trail completes
+      // (capability materialises -> executed -> reverted). A denial or a partial
+      // two-person tap does not execute. Failures are handled inside onApproved.
+      if (onApproved && out.ok && out.decision?.verdict === "approve" && out.decision?.settled !== false && decided) {
+        try { await onApproved({ intent: intents.get(cmd.intentId), action: decided, decision: out.decision }); }
+        catch { /* onApproved records its own failure; never break the loop */ }
+      }
       return { ...cmd, ok: out.ok };
     }
 
@@ -146,9 +192,20 @@ export function createTelegramLoop({
     }
 
     if (cmd.kind === "undo") {
-      await client.send({ chatId: cmd.chatId, text: `Undo requested for \`${cmd.token}\`. Replaying the registered inverse.` });
-      record({ tool: "telegram.undo", outcome: "requested", reason: cmd.token });
-      return cmd;
+      if (!undo) {
+        await client.send({ chatId: cmd.chatId, text: `Cannot undo \`${cmd.token}\`: no reversal registry on this deployment.` });
+        record({ tool: "telegram.undo", outcome: "unconfigured", reason: cmd.token });
+        return { ...cmd, ok: false };
+      }
+      const out = await undo.run(cmd.token, { operator: operator.id });
+      await client.send({
+        chatId: cmd.chatId,
+        text: out.ok
+          ? `Reversed \`${cmd.token}\`. The inverse ran and is on the ledger.`
+          : `Could not undo \`${cmd.token}\`: ${out.reason}`,
+      });
+      record({ tool: "telegram.undo", outcome: out.ok ? "undone" : "refused", reason: out.ok ? cmd.token : out.reason });
+      return { ...cmd, ok: out.ok };
     }
 
     await client.send({ chatId: cmd.chatId, text: "Not a command I act on. Try APPROVE via the buttons, AUDIT, UNDO <token>, HALT or RESUME." });

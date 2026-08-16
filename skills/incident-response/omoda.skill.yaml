@@ -1,26 +1,37 @@
-# PROVISIONAL. The capability list is a placeholder until the See team supplies
-# the manual runbook per event class (blocked: issue #13). The SHAPE is correct
-# and the compiler treats it as real; only the specific tools will change.
+# The See-track responder: it turns a detection into a filed, governed response.
 #
-# Every step a human performs today becomes one capability here. Steps that are
-# reads run unattended. Steps that write and can reach a third party or a record
-# of consequence require a recorded decision.
+# The tool LIST is still provisional until the See team supplies the manual
+# runbook per event class (blocked: issue #13); the specific tools may grow. What
+# is now settled is the WIRING: every call this agent makes goes through our
+# service layer at 100.71.143.26:3120. There are no fake government endpoints.
+# The service layer is the middle tier that obfuscates and, later, routes to the
+# real backends; OpenShell governs the call at that seam.
+#
+# Every step a human performs today becomes one capability here. Reads run
+# unattended. Writes that reach a third party or a record of consequence require
+# a recorded decision, and OpenShell enforces that at the service layer.
 skill: incident-response
 agent: responder
-description: Respond to a detection from the See track
+description: Respond to a detection from the See track, filing through the service layer
 capabilities:
   # --- reads: run free, no human, no ceremony ---
   - tool: roads.segment.lookup
     verb: read
     resource: roads:segment
     impact: []
-    egress: { host: roads.example.gov, port: 443, path: "/api/segments/**" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/roads/segments/**" }
 
   - tool: dispatch.status.read
     verb: read
     resource: dispatch:unit
     impact: []
-    egress: { host: dispatch.example.gov, port: 443, path: "/api/units/**" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/dispatch/**" }
+
+  - tool: incident.status.read
+    verb: read
+    resource: incident:record
+    impact: []
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/incidents/**" }
 
   # --- contained write: reversible, ledgered, no consent ---
   - tool: fs.write
@@ -29,24 +40,26 @@ capabilities:
     impact: []
 
   # --- consequential: a third party sees this under our name ---
+  # A record filed with the county, and a supervisor paged, both run under our
+  # identity. OpenShell holds each POST at the service layer until a decision.
   - tool: incident.record.create
     verb: create
     resource: incident:record
     impact: [legal]
-    egress: { host: dispatch.example.gov, port: 443, path: "/api/incidents" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/incidents" }
 
   - tool: supervisor.notify
     verb: create
     resource: comms:message
     impact: [reputational]
-    egress: { host: dispatch.example.gov, port: 443, path: "/api/notify" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/notify" }
 
   # --- destructive + consequential: two-person, inverse required ---
   - tool: incident.record.retract
     verb: delete
     resource: incident:record
     impact: [legal, reputational]
-    egress: { host: dispatch.example.gov, port: 443, path: "/api/incidents/**" }
+    egress: { host: 100.71.143.26, port: 3120, path: "/api/incidents/**" }
 filesystem:
   read: [/workspace]
   write: [/workspace/out]

@@ -5,9 +5,10 @@
 //
 //   /v1/out/frames        the relayed COCO video feed, one JSON per frame
 //   /v1/out/observations  COCO descriptions plus OMODA's judgment of each
-//   /v1/out/agents        realtime agent activity: every ledgered action as it
-//                         lands (broker admits and refusals, judge verdicts,
-//                         escalations, decisions, gateway and telegram events)
+//   /v1/out/agents        a thin activity ticker: two fields per event, the agent
+//                         name and the action it is taking (plus seq for order).
+//                         The full detail, authority, intent, tier, hash chain,
+//                         now lives in /v1/out/audit and /ui/audit.
 //
 // Read requires a token like everything else: a viewer holds intent:read and
 // nothing else, so the demo app can watch the platform and cannot drive it.
@@ -26,6 +27,11 @@ const TOPIC_BY_PATH = Object.freeze({
   // the instrumented paths; more instrumentation only adds events, the
   // envelope never changes shape.
   "/v1/out/agentic": "agentic",
+  // The agentic audit trail: one eight-field record per triggered agent
+  // engagement (time, agent, tool, trigger, tier, authority, outcome, intent),
+  // projected from the ledger plus the L1-L3 handoffs. Quiet frame review, which
+  // is never ledgered, does not appear. See docs/audit-stream.md.
+  "/v1/out/audit": "audit",
 });
 
 // Per-topic ceilings. THE number that sets worst-case standing latency: a
@@ -39,6 +45,7 @@ const MAX_BUFFERED_BY_TOPIC = Object.freeze({
   observation: 512 * 1024,
   agent: 1024 * 1024,            // audit events are small and losing them is worse
   agentic: 512 * 1024,
+  audit: 1024 * 1024,            // the audit trail must not silently drop records
 });
 const MAX_BUFFERED = 512 * 1024;
 

@@ -23,7 +23,7 @@ export const INTENT_STATE = Object.freeze({
  *   held, we fail closed and say why. Set it from the size of the operator
  *   allowlist at boot.
  */
-export function createIntentStore({ singleOperator = false } = {}) {
+export function createIntentStore({ singleOperator = false, onPropose = null } = {}) {
   const byId = new Map();
   const byIdemKey = new Map();
   // An action is "final" once it settles (approved) or is denied. A final
@@ -77,6 +77,10 @@ export function createIntentStore({ singleOperator = false } = {}) {
       };
       byId.set(intent.id, intent);
       if (idempotencyKey) byIdemKey.set(idempotencyKey, intent);
+      // L0 is wired here: a new intent is routed to a capability by the
+      // orchestrator. Fire-and-forget and guarded, so routing never blocks or
+      // breaks the propose path; a duplicate never re-fires.
+      if (onPropose) { try { Promise.resolve(onPropose(intent)).catch(() => {}); } catch { /* never throws into propose */ } }
       return { intent, duplicate: false };
     },
 

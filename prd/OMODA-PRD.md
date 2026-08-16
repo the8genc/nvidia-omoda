@@ -1048,3 +1048,234 @@ Their PRD says **"Submission: one combined See-to-Do product in a monorepo."**
 Merging repositories is an organizational act affecting both teams' history and
 CI; OMODA will not do it unilaterally. Tracked as an issue for Arif and the See
 team to decide before the 11:00 freeze.
+
+---
+
+## 25. Demo skill architecture (accident + fire), and the OpenShell showcase
+
+Source: "OMODA Skill Architecture for the Demo" (transcript, 2026-08-16). Two
+scenarios, both from COCO video: a vehicle collision and a fire. This section is
+the org chart as agreed, plus the additions that make the OpenShell
+dangerous-action work legible on screen.
+
+### 25.1 The org chart
+
+```
+L0 orchestrator            routes on incident_type (traffic-accident | fire)
+├─ L1 accident-agent       domain: collisions
+│    ├─ L2 ambulatory       request EMS            (shared with fire-agent)
+│    └─ L2 police           notify / request police
+├─ L1 fire-agent           domain: fires
+│    ├─ L2 ambulatory       (the same shared agent)
+│    └─ L2 fire-department  request fire response
+├─ L2 roadside             tow trucks, debris clearance, Seattle DOT (non-dangerous)
+└─ L3 emergency-dispatch   the 911 tooling every L2 shares, governed by OpenShell
+```
+
+Decisions carried from the transcript:
+- **L0 routes by incident type.** This is the judge's `incident_type` plus the
+  orchestrator (section 24, and now wired into the intake loop). `fire` is added
+  to the judge's class enum for this.
+- **The 911 call is the dangerous, deliberately non-human-gated action** the
+  whole platform exists to protect. It is one shared L3 tooling agent, not
+  context-aware, that any L2 invokes.
+- **Ambulatory is shared** across both L1s. Skills are files; sharing is
+  referencing the same agent.
+- **Reporting is NOT a separate L3.** It is the proxy-layer audit between L0 and
+  L1, which is the hash-chained ledger plus the `/v1/out/agents` stream. A final
+  summary agent is a nice-to-have, not P0.
+- **Roadside/maintenance stays L2** (non-destructive).
+
+### 25.2 The OpenShell showcase: making the taxonomy visible
+
+The transcript's instinct ("dangerous, but don't human-gate it; make sure it
+can't do something nefarious") is exactly the two-axis taxonomy. The demo should
+show the whole spectrum in one agent rather than only the escalation case, so a
+judge sees reads run free, contained writes run with a way back, consequential
+writes compile to read-only until a decision, and prohibited actions have no
+decision path at all.
+
+**L3 `emergency-dispatch`** spans the spectrum by CRUD verb:
+
+| capability | verb | impact | what the demo shows |
+|---|---|---|---|
+| `dispatch.status.read` | read | [] | runs free, no human |
+| `dispatch.unit.request` | create | [legal] | **approval**: the POST is absent from policy until a recorded decision |
+| `dispatch.callout.cancel` | delete | [legal, reputational] | **two-person**: cancelling an emergency response takes two |
+
+**L2 `roadside`** is the contained-write beat the emergency agents lack:
+
+| capability | verb | impact | what the demo shows |
+|---|---|---|---|
+| `roadside.segment.read` | read | [] | free |
+| `roadside.workorder.create` | create | [] | autonomous, ledgered, **real UNDO token** (a tow request is reversible) |
+| `roadside.workorder.cancel` | delete | [] | autonomous with an inverse |
+
+**The prohibited beat.** `dispatch.mass_broadcast` (city-wide alerting) sits on
+the prohibited list: even a valid two-person decision is refused. This is the
+counterpoint that proves the gate is structural, not "ask nicely twice."
+
+**The self-protection beat.** An agent attempts to widen egress or disable
+device auth "to reach dispatch faster"; the Broker refuses with
+`gateway-self-protection` while holding a valid decision. The most differentiated
+thirty seconds in the demo: a consent path that cannot dismantle the consent
+mechanism.
+
+### 25.3 What this requires in code
+
+- Add `fire` to the judge's incident classes and the candidate lexicon.
+- Ship the manifests: `accident-agent` (L1), `fire-agent` (L1), `ambulatory`
+  (L2, shared), `police` (L2), `fire-department` (L2), `roadside` (L2),
+  `emergency-dispatch` (L3). All are `omoda.skill.md` files; the compiler and
+  level contract already enforce the hierarchy.
+- Add `dispatch.mass_broadcast` to `src/domain/prohibited.js`.
+- The rest already exists: L0 routing, consent stages, approval-scoped
+  capability, two-person enforcement, UNDO, the agentic stream that lets the
+  demo narrate every hop.
+
+## 26. The service layer: OpenShell governs a middle tier, not just the tool edge
+
+Agents do not call the outside world directly. Every external-facing call an agent
+makes goes through one service layer on the box (`100.71.143.26:3120`,
+`src/mock/city-services.js`, run as the `city-services` systemd unit). It fronts
+911 dispatch (fire / EMS / police), roadside and Seattle DOT, and the county
+incident registry: one gateway obfuscating several services, which is what a
+production agent sees, and the tier that would route each call to its real backend
+once the agent is given the ability to do so.
+
+The point this proves: **OpenShell can protect calls to external resources at a
+middle layer of the stack, not only at the tool edge.** The two-axis taxonomy is
+applied at the service seam. A read (`GET /api/dispatch/**`, fleet or call status;
+`GET /api/roads/segments/**`; `GET /api/incidents/**`) runs unattended. A
+reversible write (`POST /api/roads/workorders`) runs autonomously with an UNDO. A
+consequential write that puts something in the real world under our name is held:
+
+| route | backing tool | impact | consent |
+|---|---|---|---|
+| `POST /api/dispatch` | dispatch.unit.request | legal | approval |
+| `DELETE /api/dispatch/{call_id}` | dispatch.callout.cancel | legal + reputational | two-person |
+| `POST /api/incidents` | incident.record.create | legal | approval |
+| `DELETE /api/incidents/{id}` | incident.record.retract | legal + reputational | two-person |
+| `POST /api/notify` | supervisor.notify | reputational | review |
+| `POST /api/procurement/callouts` | procurement.callout.authorize | financial | approval |
+| `DELETE /api/procurement/callouts/{id}` | procurement.callout.cancel | financial + legal | two-person |
+| `PUT /api/utility/power/deenergize` | utility.power.deenergize | legal + reputational | approval |
+| `PUT /api/utility/gas/shutoff` | utility.gas.shutoff | legal | approval |
+| `POST /api/evidence/clips` | evidence.clip.export | legal | approval |
+| `DELETE /api/evidence/clips/{id}` | evidence.clip.retract | legal + reputational | two-person |
+| `POST /api/comms/advisories` | comms.advisory.post | reputational | review |
+| `POST /api/comms/reverse911` | comms.reverse911.send | legal + reputational | approval |
+
+The five service domains are built to cover the taxonomy end to end:
+**dispatch/incidents** (create/delete + legal), **procurement** (the `financial`
+impact domain: authorizing a private crane or hazmat vendor spends public money),
+**utility** (the `update` verb: de-energizing a block or shutting off gas is a
+change to a live grid state, PUT-gated the same way a POST is), **surveillance**
+(privacy-weighted legal writes plus a contained camera update), and **comms** (the
+review -> approval ladder on one resource). The reversible writes
+(`utility.power.restore`, `camera.ptz.control`, `roadside.workorder.*`) run
+autonomously with an UNDO.
+
+Four capabilities have **no decision path at all**, refused before any policy
+check: `utility.grid.blackout` (city-wide cut), `camera.facial_recognition`
+(biometric tracking), `evidence.public_release` (public footage dump), and
+`comms.city_alert` / `dispatch.mass_broadcast`. Each has a governed cousin one rung
+down that DOES have a path; the extreme has none. For a platform that watches a
+city on CCTV, foreclosing biometric tracking and public footage release
+structurally, rather than by policy the operator could approve away, is the point.
+
+### 26.1 The boundary cannot drift
+
+`GET /api/catalog` returns every route with its backing tool and an
+`openshell_protected` flag read live from the skills manifest, so what the service
+layer calls dangerous is by construction exactly what the platform gates. Every
+catalogued route resolves to a declared capability; the mock derives each write's
+`dangerous` flag from the same manifest. There are no calls to fake external
+endpoints in any manifest. The only non-service-layer hosts an agent reaches are
+the two genuinely separate real platforms on the box: COCO perception (`:8091`)
+and the OpenClaw gateway (`:18789`).
+
+### 26.2 Agents know their reach
+
+Awareness is carried two ways, kept in sync. The planner catalog hands the model
+every declared tool with its verb, blast domain, owning agent, the concrete API it
+reaches, and whether it is OpenShell-gated (context, never authority: undeclared is
+still denied at the Broker). Each skill body names the concrete endpoints it acts
+on and the scenario that triggers it, so an agent's instructions match the live
+service layer. The full path from a CCTV observation to a governed call
+(trigger -> L1 -> L2 -> L3 -> endpoint -> protection) is documented in
+`docs/service-layer.md`; the read side for the dashboard is in
+`docs/dashboard-integration.md`.
+
+### 26.3 What this requires in code
+
+- The service layer (`src/mock/city-services.js`, `src/mock/serve-city.js`), the
+  `city-services` systemd unit on `:3120`, and a `:3120` health gate in the box
+  smoke (`scripts/box-verify.sh`), so a deploy is RED until the layer is live.
+- Every manifest's egress points at `:3120`; the `incident-response` responder is
+  wired through it alongside the emergency and roadside agents.
+- The planner renders the endpoint and gate per tool (`src/models/plan.js`).
+
+### 26.4 The expanded showcase roster (2026-08-16)
+
+Ten agents added to cover the taxonomy gaps, each a robust `omoda.skill.md` with a
+prose body naming its endpoints and protection:
+
+- **Procurement / finance:** L2 `procurement` (vendor reads) + L3
+  `procurement-gateway` (authorize spend: create+financial -> approval; cancel a
+  paid contract: delete+financial+legal -> two-person).
+- **Utility / infrastructure:** L1 `utility` + L2 `utility-ops` (grid read,
+  contained power restore) + L3 `utility-control` (de-energize / gas shutoff:
+  update+legal -> approval).
+- **Surveillance / evidence:** L2 `evidence-desk` (contained camera PTZ, clip
+  status) + L3 `surveillance-ops` (export: create+legal -> approval; retract:
+  delete+legal+reputational -> two-person).
+- **Public-safety comms:** L1 `comms` + L2 `public-info` (channel read) + L3
+  `notify-gateway` (advisory: review; reverse-911: approval).
+
+Trigger phrases route infrastructure hazards to `utility` and public-warning
+language to `comms` (`src/transport/triggers.js`); the accident and fire response
+plans (`src/domain/response-plan.js`) escalate to procurement (crane / hazmat) and
+evidence (footage export). New prohibited beats live in `src/domain/prohibited.js`:
+`no-grid-blackout`, `no-biometric-surveillance`, `no-surveillance-public-release`.
+
+## 27. The agentic audit trail: condensed stream, robust DB
+
+Everything the multi-tier agents do, and the information they flow to one another,
+is referenceable. The source of truth is the hash-chained action ledger
+(`src/ledger/ledger.js`), written and fsynced before each action runs. Two tiers
+sit over it.
+
+**The condensed stream** (`/v1/out/audit`, WebSocket, no auth) is the demo
+dashboard's view: one eight-field record per agent engagement, projected by
+`src/telemetry/audit.js`.
+
+| field | meaning |
+|---|---|
+| time | when it happened (ISO 8601) |
+| agent | the acting agent (raw name + a display phrase) |
+| tool | the tool used (null for a handoff) |
+| trigger | the trigger word, split into verb (CRUD), noun (resource), phrase (the take-action word) |
+| tier | the agent's rank L0-L3 (or operator / input) |
+| authority | who authorised it: a person, the envelope, or none |
+| outcome | what happened |
+| intent | why it acted: the incident id (groups the chain) and the reason |
+
+**What is deliberately absent from the trail.** A motor quietly reviewing frames
+that trigger nothing does not appear. The trail begins when L0 (OMODA) sees
+something that triggers it, and captures every downstream L1 -> L2 -> L3
+engagement. Quiet frames are never ledgered; perception, knowledge, and admin
+reads are filtered out (`isAuditWorthy`).
+
+**The robust DB** (`/ui/audit`, admin login) is the operational record for a
+human. It shows every field the ledger holds, more than the stream: `seq` / `hash`
+/ `prevHash` (the chain, verified on load), `argsHash` (evidence without storing
+the args), `target` (the concrete external call governed), `intentId` (incident
+linkage down to the L3 tool call), `decidedBy` / `authority`, the prohibited
+`rule` on a refusal, and the full raw JSON per row. It is filterable by intent,
+agent, tier, outcome, verb, and time. The same records are at `GET /v1/ledger`
+(bearer token) for programmatic review.
+
+The robustness lives in the DB, not the stream: the ledger records what is needed
+to operate and audit the system, and the dashboard pulls the condensed slice it
+needs. Full contract: `docs/audit-stream.md`.

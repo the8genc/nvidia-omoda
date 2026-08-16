@@ -61,3 +61,18 @@ test("destructive git on refs we do not own is refused", () => {
     "our own branches are ours to force-push",
   );
 });
+
+test("some capabilities have no decision path: broadcast, blackout, biometric, footage release", () => {
+  // a city-wide alert, from either the dispatch or the comms surface
+  assert.equal(prohibitedReason({ tool: "dispatch.mass_broadcast" }), "no-mass-broadcast");
+  assert.equal(prohibitedReason({ tool: "comms.city_alert" }), "no-mass-broadcast");
+  // cutting power to the whole city (one block is a governed update; the grid is not)
+  assert.equal(prohibitedReason({ tool: "utility.grid.blackout" }), "no-grid-blackout");
+  // the surveillance red line: biometric tracking and public footage dumps
+  assert.equal(prohibitedReason({ tool: "camera.facial_recognition" }), "no-biometric-surveillance");
+  assert.equal(prohibitedReason({ tool: "evidence.public_release" }), "no-surveillance-public-release");
+  // the governed cousins of these are NOT prohibited: they have a decision path
+  assert.equal(prohibitedReason({ tool: "utility.power.deenergize" }), null, "one block is a governed update");
+  assert.equal(prohibitedReason({ tool: "evidence.clip.export" }), null, "an evidence export is a governed create");
+  assert.equal(prohibitedReason({ tool: "comms.reverse911.send" }), null, "a reverse-911 is a governed create");
+});

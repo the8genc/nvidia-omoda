@@ -52,6 +52,9 @@ sshb "cd $DIR && bash scripts/box-verify.sh tests" || die "tests failed on the b
 
 step "Restart the service and wait for health"
 sshb "sudo systemctl restart $SVC" || die "systemctl restart failed"
+# The mock service layer is its own unit; restart it too so the box stays in
+# parity. If it is not installed yet, that is fine (smoke will catch a real gap).
+sshb "sudo systemctl is-enabled city-services >/dev/null 2>&1 && sudo systemctl restart city-services || true"
 ok=0
 for i in $(seq 1 20); do
   c=$(sshb "curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:3110/healthz" 2>/dev/null)

@@ -7,6 +7,7 @@
 
 import { createElement as h, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { levelFor } from "../telemetry/display.js";
 
 const CSS = `
 :root{--bg:#0f1115;--panel:#171a21;--line:#252a34;--fg:#e6e9ef;--dim:#8b94a7;
@@ -45,6 +46,15 @@ button{background:#1f6feb;border:0;color:#fff;padding:6px 12px;border-radius:6px
 font-weight:600;cursor:pointer}
 button.deny{background:#3a1d1c;color:var(--bad)}
 .note{color:var(--dim);font-size:12px;margin:6px 0 0}
+.scroll{overflow-x:auto;border-radius:8px}
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:0 0 14px}
+.filters .f{display:flex;flex-direction:column;gap:4px}
+.filters label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
+.filters input{min-width:120px}
+details.raw>summary{cursor:pointer;color:var(--acc);font-size:11px;list-style:none}
+details.raw pre{background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:10px;
+overflow-x:auto;font-family:var(--mono);font-size:11px;color:var(--dim);margin:6px 0 0;white-space:pre-wrap;word-break:break-word}
+td.small{font-size:11px}
 `;
 
 const pill = (text, kind = "dim") => h("span", { className: `pill ${kind}` }, text);
@@ -64,8 +74,12 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui", className: active === "skills" ? "on" : "" }, "Skills"),
           h("a", { href: "/ui/intents", className: active === "intents" ? "on" : "" }, "Intents"),
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
+          h("a", { href: "/ui/audit", className: active === "audit" ? "on" : "" }, "Audit"),
+          h("a", { href: "/ui/training", className: active === "training" ? "on" : "" }, "Training"),
+          h("a", { href: "/ui/demo", className: active === "demo" ? "on" : "" }, "Demo"),
           h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
           h("a", { href: "/ui/knowledge", className: active === "knowledge" ? "on" : "" }, "Knowledge"),
+          h("a", { href: "/ui/triggers", className: active === "triggers" ? "on" : "" }, "Triggers"),
         ),
       ),
       h("main", null, children),
@@ -174,6 +188,174 @@ export function LedgerPage({ entries, chain }) {
   );
 }
 
+/**
+ * The training page: one button to start/stop capturing the descriptions flowing
+ * in, labeled action / borderline / normal, to a JSONL file the team trains on.
+ * This is the durable version of the ad-hoc capture that seeded the trigger work.
+ */
+export function TrainingPage({ csrf, status, added = null, stopped = null }) {
+  const s = status ?? { active: false, tally: { action: 0, borderline: 0, normal: 0, total: 0 } };
+  const t = s.tally ?? { action: 0, borderline: 0, normal: 0, total: 0 };
+  return h(Layout, { title: "training", active: "training" },
+    h("h2", null, "Agent training capture  ",
+      s.active ? pill("recording", "ok") : pill("idle", "dim")),
+    h("p", { className: "note" },
+      "Records every frame description flowing in from the video stream, labeled the way L0 judges it, ",
+      "to a JSONL file you can train the take-action triggers on. Reads the live triggers, so labels ",
+      "reflect the current configuration. Start before a run, stop when done, then pull the file from ",
+      h("code", null, "var/training/"), "."),
+    stopped ? h("div", { className: "okbox" },
+      `Stopped. ${stopped.tally?.total ?? 0} rows captured `
+      + `(action ${stopped.tally?.action ?? 0}, borderline ${stopped.tally?.borderline ?? 0}, normal ${stopped.tally?.normal ?? 0}). `
+      + `File: ${stopped.file ?? "-"}`) : null,
+    added ? h("div", { className: "okbox" }, `Recording started. Writing to ${added}`) : null,
+    h("div", { style: { display: "flex", gap: 12, alignItems: "center", margin: "14px 0" } },
+      s.active
+        ? h("form", { className: "inline", method: "post", action: "/ui/training/stop" },
+          h("input", { type: "hidden", name: "csrf", value: csrf }),
+          h("button", { className: "deny", type: "submit" }, "Stop capture"))
+        : h("form", { className: "inline", method: "post", action: "/ui/training/start" },
+          h("input", { type: "hidden", name: "csrf", value: csrf }),
+          h("button", { type: "submit" }, "Start capture")),
+      s.active && s.file ? h("span", { className: "note" }, "writing to ", h("code", null, s.file)) : null,
+    ),
+    h("table", null,
+      h("thead", null, h("tr", null, ["This session", "Rows"].map((c) => h("th", { key: c }, c)))),
+      h("tbody", null,
+        h("tr", null, h("td", null, "action (L0 would route to an L1)"), h("td", { className: "mono" }, t.action)),
+        h("tr", null, h("td", null, "borderline (signals, judged not an incident)"), h("td", { className: "mono" }, t.borderline)),
+        h("tr", null, h("td", null, "normal"), h("td", { className: "mono" }, t.normal)),
+        h("tr", null, h("td", null, h("strong", null, "total")), h("td", { className: "mono" }, h("strong", null, t.total))),
+      )),
+    h("p", { className: "note" },
+      "Borderline rows are the richest for tuning: signals fired but no trigger word matched, ",
+      "so they surface phrases worth adding. Feed footage that describes hazards in new words to grow this set."),
+  );
+}
+
+/**
+ * The demo page: fire a real Telegram Approve/Deny for a chosen gated tool, to
+ * show the human gate live. It runs the actual escalation path (intent ->
+ * awaitConsent -> telegramClient.escalate), so the operator's tap flows back
+ * through the normal decide path. The action is a demo; the consent is real.
+ */
+export function DemoPage({ csrf, gated = [], configured = true, sent = null, error = null }) {
+  return h(Layout, { title: "demo", active: "demo" },
+    h("h2", null, "Trigger a dangerous action  ",
+      configured ? pill("Telegram ready", "ok") : pill("Telegram not configured", "bad")),
+    h("p", { className: "note" },
+      "Sends a real Approve/Deny to the operator's phone for a chosen gated tool, through the same ",
+      "escalation path a live incident uses. The write stays absent from policy until you tap. ",
+      "Use it to show OpenShell-protected actions in real time."),
+    error ? h("div", { className: "err" }, error) : null,
+    sent ? h("div", { className: "okbox" },
+      `Sent to the operator. \`${sent.tool}\` (${sent.consent}) is awaiting a tap. intent: ${sent.intentId}`) : null,
+    !configured
+      ? h("div", { className: "empty" }, "Telegram is not configured on this deployment, so no approval can be sent. Set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_IDS.")
+      : gated.length === 0
+        ? h("div", { className: "empty" }, "No gated tools are declared.")
+        : h("form", { className: "stack", method: "post", action: "/ui/demo/trigger" },
+          h("input", { type: "hidden", name: "csrf", value: csrf }),
+          h("label", { htmlFor: "tool" }, "Gated tool to escalate"),
+          h("select", { id: "tool", name: "tool" },
+            gated.map((g) => h("option", { key: g.tool, value: g.tool },
+              `${g.tool}  —  ${g.verb}${g.impact.length ? " [" + g.impact.join("+") + "]" : ""}  →  ${g.consent}`))),
+          h("button", { type: "submit" }, "Send Approve/Deny to Telegram")),
+    h("h2", null, "The gated tools"),
+    h("table", null,
+      h("thead", null, h("tr", null, ["Tool", "Verb", "Impact", "Consent", "Agent"].map((c) => h("th", { key: c }, c)))),
+      h("tbody", null, gated.map((g) =>
+        h("tr", { key: g.tool },
+          h("td", { className: "mono" }, g.tool),
+          h("td", null, g.verb),
+          h("td", { className: "small" }, g.impact.join("+") || "-"),
+          h("td", null, g.consent === "two-person" ? pill("two-person", "bad") : pill(g.consent, "warn")),
+          h("td", null, g.agent)))),
+    ),
+  );
+}
+
+// The tier as the org chart sees it: an agent's rank (L0-L3), or a named role.
+function orgTier(agent, levelMap) {
+  const lvl = levelFor(agent, levelMap);
+  if (typeof lvl === "number") return pill(`L${lvl}`, lvl === 0 ? "warn" : "dim");
+  if (lvl) return pill(String(lvl), "dim");
+  return pill("-", "dim");
+}
+
+const short = (s, n = 12) => (s == null ? "-" : String(s).length > n ? String(s).slice(0, n) + "…" : String(s));
+
+/**
+ * The robust audit-DB view, admin only. The dashboard stream (/v1/out/audit) is
+ * the condensed eight-field projection; THIS is the full hash-chained record a
+ * human reviews: every field the ledger holds, filterable, with the raw JSON one
+ * click away and the chain-integrity state up top.
+ */
+export function AuditPage({ entries, chain, filters = {}, levelMap = null }) {
+  const f = (name, label, ph) =>
+    h("div", { className: "f" },
+      h("label", null, label),
+      h("input", { type: "text", name, defaultValue: filters[name] ?? "", placeholder: ph ?? "" }));
+  return h(Layout, { title: "audit", active: "audit" },
+    h("h2", null, "Audit trail  ",
+      chain.ok ? pill(`chain verifies, ${chain.length} entries`, "ok") : pill(`CHAIN BROKEN at ${chain.brokenAt}`, "bad")),
+    h("p", { className: "note" },
+      "The full audit database: every ledgered agent action, hash-chained and fsynced before it ran. ",
+      "The dashboard shows a condensed live stream (/v1/out/audit); this page is the deep record behind the admin login."),
+    h("form", { className: "filters", method: "get", action: "/ui/audit" },
+      f("intent", "Intent id", "int-..."),
+      f("agent", "Agent", "emergency-dispatch"),
+      f("tier", "Tier", "consequential"),
+      f("outcome", "Outcome", "executed"),
+      f("verb", "Verb", "create"),
+      f("since", "Since (ISO)", "2026-08-16"),
+      h("div", { className: "f" }, h("label", null, " "), h("button", { type: "submit" }, "Filter")),
+      h("div", { className: "f" }, h("label", null, " "), h("a", { href: "/ui/audit", className: "note" }, "clear")),
+    ),
+    entries.length === 0
+      ? h("div", { className: "empty" }, "No matching audit records.")
+      : h("div", { className: "scroll" }, h("table", null,
+        h("thead", null, h("tr", null,
+          ["#", "Time", "Agent", "Tier", "Tool", "Verb", "Impact", "Trigger", "Authority", "By", "Outcome", "Intent", "Target", "Args", "Hash", ""].map((c) => h("th", { key: c }, c)),
+        )),
+        h("tbody", null, entries.slice().reverse().map((e) => {
+          const authKind = String(e.authority ?? "-");
+          const authPill = authKind.startsWith("decision") ? pill("operator", "ok")
+            : authKind === "envelope" ? pill("envelope", "dim")
+              : authKind === "pending" ? pill("pending", "warn")
+                : (authKind === "denied" || authKind === "prohibited" || authKind === "incident") ? pill(authKind, "bad")
+                  : pill(short(authKind, 16), "dim");
+          return h("tr", { key: e.seq },
+            h("td", { className: "mono" }, e.seq),
+            h("td", { className: "mono small" }, e.at ? e.at.replace("T", " ").replace(/\.\d+Z$/, "Z") : "-"),
+            h("td", null, e.agent ?? "-"),
+            h("td", null, orgTier(e.agent, levelMap)),
+            h("td", { className: "mono small" }, e.tool ?? "-"),
+            h("td", null, e.verb ?? "-"),
+            h("td", { className: "small" }, (e.impact ?? []).join("+") || "-"),
+            h("td", { className: "small" }, e.triggerPhrase ?? "-"),
+            h("td", null, authPill),
+            h("td", { className: "small" }, e.decidedBy ?? "-"),
+            h("td", null,
+              e.outcome === "refused" ? pill("refused", "bad")
+                : e.outcome === "executed" ? pill("executed", "ok")
+                  : pill(short(e.outcome ?? "-", 16), "dim")),
+            h("td", { className: "mono small" }, short(e.intentId, 14)),
+            h("td", { className: "mono small" }, short(e.target, 26)),
+            h("td", { className: "mono small" }, short(e.argsHash, 10)),
+            h("td", { className: "mono small" }, short(e.hash, 10)),
+            h("td", null, h("details", { className: "raw" },
+              h("summary", null, "raw"),
+              h("pre", null, JSON.stringify(e, null, 2)))),
+          );
+        })),
+      )),
+    h("p", { className: "note" },
+      `Showing ${entries.length} record(s). Filters narrow the ledger query; the raw record under each row is the exact hash-chained entry. `,
+      "Reason / why: ", entries.length ? short(entries[entries.length - 1].reason, 80) : "-"),
+  );
+}
+
 const LEVELS = [
   ["0", "L0 orchestrator: reasons over every request, holds inference, no tools"],
   ["1", "L1 domain expert: domain-scoped inference, directs its L2s, no tools"],
@@ -258,6 +440,51 @@ export function KnowledgePage({ csrf, docs = [], backend = "lexical", error = nu
           ),
         )),
       ),
+  );
+}
+
+export function TriggersPage({ csrf, rules = [], l1Agents = [], error = null, added = null }) {
+  return h(Layout, { title: "triggers", active: "triggers" },
+    h("h2", null, "Take-action triggers  ", pill(`${rules.length} rule(s)`, "dim")),
+    h("p", { className: "note" },
+      "L0 checks every observation's text against these phrases first, deterministically. ",
+      "A hit routes straight to the named L1 agent, no inference. Text that matches nothing ",
+      "and shows no other signal is ignored; anything ambiguous goes to the model to infer."),
+    error ? h("div", { className: "err" }, error) : null,
+    added ? h("div", { className: "okbox" }, `Added a trigger for "${added}".`) : null,
+    rules.length === 0
+      ? h("div", { className: "empty" }, "No triggers configured.")
+      : h("table", null,
+        h("thead", null, h("tr", null, ["Phrases", "Incident", "Routes to (L1)", "Action", ""].map((c) => h("th", { key: c }, c)))),
+        h("tbody", null, rules.map((r) =>
+          h("tr", { key: r.id },
+            h("td", null, r.phrases.map((p) => h("span", { key: p }, pill(p, "warn"), " "))),
+            h("td", { className: "mono" }, r.incidentType),
+            h("td", null, pill(r.l1, "dim")),
+            h("td", null, r.action || "-"),
+            h("td", null,
+              h("form", { className: "inline", method: "POST", action: "/ui/triggers/delete" },
+                h("input", { type: "hidden", name: "csrf", value: csrf }),
+                h("input", { type: "hidden", name: "id", value: r.id }),
+                h("button", { type: "submit", className: "deny" }, "Remove"))),
+          ),
+        )),
+      ),
+    h("h2", { style: { marginTop: 28 } }, "Add a trigger"),
+    h("form", { className: "stack", method: "POST", action: "/ui/triggers" },
+      h("input", { type: "hidden", name: "csrf", value: csrf }),
+      h("label", null, "Phrases (comma-separated; a match on any routes to the L1 below)"),
+      h("input", { type: "text", name: "phrases", required: true, placeholder: "overturned, rollover, vehicle on its side" }),
+      h("label", null, "Incident type"),
+      h("input", { type: "text", name: "incidentType", placeholder: "traffic-accident" }),
+      h("label", null, "Routes to L1 agent"),
+      h("select", { name: "l1" }, l1Agents.map((a) => h("option", { key: a, value: a }, a))),
+      h("label", null, "Action (what that L1 coordinates)"),
+      h("input", { type: "text", name: "action", placeholder: "coordinate the accident response" }),
+      h("button", { type: "submit" }, "Add trigger"),
+    ),
+    h("p", { className: "note" },
+      "Stored in the ingest layer and read on every frame. The L1 you choose decides downstream via inference; dangerous steps are gated by OpenShell."),
   );
 }
 

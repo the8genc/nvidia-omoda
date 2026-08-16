@@ -14,7 +14,8 @@ import {
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
-import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage, KnowledgePage } from "../web/ui.js";
+import { render, SkillsPage, IntentsPage, LedgerPage, AuditPage, AgentNewPage, KnowledgePage, TriggersPage, TrainingPage, DemoPage } from "../web/ui.js";
+import { skillLevelMap } from "../telemetry/display.js";
 import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { safeParseManifest } from "../schema/manifest.js";
@@ -74,6 +75,10 @@ export function createApp({
   tokens, ledger, intents, nonces, limiter, skills = [], uiOperator = null,
   skillsDir = "skills",
   knowledge = null,
+  triggers = null,
+  training = null,
+  demo = null,
+  l1Agents = [],
   // How "apply now" takes effect. The default exits non-zero after the response
   // has flushed, so systemd (Restart=on-failure) brings the service back with
   // the new skill loaded. Injected so tests never kill their own process.
@@ -206,6 +211,20 @@ export function createApp({
     if (path === "/ui/ledger" && method === "GET") {
       return html(200, render(LedgerPage({ entries: ledger.query({ limit: 200 }), chain: ledger.verify() })));
     }
+    if (path === "/ui/audit" && method === "GET") {
+      // The robust audit-DB view: the full hash-chained record, filterable, admin
+      // only. The dashboard's /v1/out/audit stream is the condensed projection.
+      const q = Object.fromEntries(url.searchParams.entries());
+      const filters = {
+        intentId: q.intent || undefined, agent: q.agent || undefined, tier: q.tier || undefined,
+        outcome: q.outcome || undefined, verb: q.verb || undefined, since: q.since || undefined,
+      };
+      const entries = ledger.query({ ...filters, limit: Number(q.limit) || 500 });
+      return html(200, render(AuditPage({
+        entries, chain: ledger.verify(), levelMap: skillLevelMap(skills),
+        filters: { intent: q.intent, agent: q.agent, tier: q.tier, outcome: q.outcome, verb: q.verb, since: q.since },
+      })));
+    }
     if (path === "/ui/decide" && method === "POST") {
       const form = new URLSearchParams(await readBody(req));
       if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
@@ -223,6 +242,65 @@ export function createApp({
       });
       res.writeHead(303, { location: "/ui/intents" });
       return res.end();
+    }
+
+    if (path === "/ui/triggers" && method === "GET") {
+      if (!triggers) return html(503, "<p>trigger store not configured</p>");
+      return html(200, render(TriggersPage({ csrf, rules: triggers.list(), l1Agents })));
+    }
+    if (path === "/ui/triggers" && method === "POST") {
+      if (!triggers) return html(503, "<p>trigger store not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const out = triggers.add({
+        phrases: form.get("phrases"), incidentType: form.get("incidentType"),
+        l1: form.get("l1"), action: form.get("action"),
+      });
+      if (!out.ok) return html(422, render(TriggersPage({ csrf, rules: triggers.list(), l1Agents, error: out.reason })));
+      return html(200, render(TriggersPage({ csrf, rules: triggers.list(), l1Agents, added: (out.rule.phrases[0] ?? "") })));
+    }
+    if (path === "/ui/triggers/delete" && method === "POST") {
+      if (!triggers) return html(503, "<p>trigger store not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      triggers.remove(form.get("id"));
+      res.writeHead(303, { location: "/ui/triggers" });
+      return res.end();
+    }
+
+    if (path === "/ui/demo" && method === "GET") {
+      if (!demo) return html(503, "<p>demo control not configured</p>");
+      return html(200, render(DemoPage({ csrf, gated: demo.gatedTools(), configured: demo.configured() })));
+    }
+    if (path === "/ui/demo/trigger" && method === "POST") {
+      if (!demo) return html(503, "<p>demo control not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      let out;
+      try { out = await demo.trigger(form.get("tool")); }
+      catch (err) { out = { ok: false, reason: `escalation failed: ${String(err.message).slice(0, 200)}` }; }
+      return html(out.ok ? 200 : 422, render(DemoPage({
+        csrf, gated: demo.gatedTools(), configured: demo.configured(),
+        sent: out.ok ? out : null, error: out.ok ? null : out.reason,
+      })));
+    }
+    if (path === "/ui/training" && method === "GET") {
+      if (!training) return html(503, "<p>training recorder not configured</p>");
+      return html(200, render(TrainingPage({ csrf, status: training.status() })));
+    }
+    if (path === "/ui/training/start" && method === "POST") {
+      if (!training) return html(503, "<p>training recorder not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const out = training.start();
+      return html(200, render(TrainingPage({ csrf, status: training.status(), added: out.file })));
+    }
+    if (path === "/ui/training/stop" && method === "POST") {
+      if (!training) return html(503, "<p>training recorder not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const out = training.stop();
+      return html(200, render(TrainingPage({ csrf, status: training.status(), stopped: out })));
     }
 
     let raw = "";

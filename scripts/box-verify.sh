@@ -80,6 +80,16 @@ run_smoke() {
   c=$(code "http://127.0.0.1:3140/health")
   [ "$c" = 200 ] && pass "Nemotron Embed healthy on :3140" || fail "Nemotron Embed :3140 -> $c"
 
+  #    The mock external service layer (city services the agents call). It binds
+  #    the configured host (tailnet, so the dashboard can poll it), like the stream.
+  CHOST="${OMODA_CITY_HOST:-$(grep -soE 'OMODA_CITY_HOST=[^ ]+' /etc/systemd/system/city-services.service | head -1 | cut -d= -f2-)}"; CHOST="${CHOST:-127.0.0.1}"
+  c=$(code "http://$CHOST:3120/health")
+  [ "$c" = 200 ] && pass "city-services mock healthy on :3120 ($CHOST)" || fail "city-services :3120 on $CHOST -> $c"
+  #    The showcase surface is live: the financial-domain route exists and the
+  #    catalog marks it OpenShell-protected (derived from the manifest).
+  fin=$(curl -s -m 5 "http://$CHOST:3120/api/catalog" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s).routes.find(x=>x.tool==="procurement.callout.authorize");process.stdout.write(r&&r.impact.includes("financial")&&r.consent==="approval"&&r.openshell_protected===true?"ok":"no");}catch{process.stdout.write("no");}})' 2>/dev/null || echo no)
+  [ "$fin" = ok ] && pass "service layer exposes the financial beat, gated (procurement authorize -> approval)" || fail "city-services catalog missing the protected financial route"
+
   # 6. all three layers, end to end, against the live gateway. This is the one
   #    that proves the architecture rather than the process being up.
   if [ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ] && ! grep -q '^OPENCLAW_GATEWAY_TOKEN=' .env 2>/dev/null; then

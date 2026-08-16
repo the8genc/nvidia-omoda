@@ -23,7 +23,7 @@ import { screenText } from "../models/screen.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { telemetry } from "../telemetry/agentic.js";
 
-export const INCIDENT_TYPES = ["traffic-accident", "fallen-signage", "road-maintenance", "other"];
+export const INCIDENT_TYPES = ["traffic-accident", "fire", "fallen-signage", "road-maintenance", "utility-hazard", "public-warning", "other"];
 
 /**
  * Stage 1. Pure, cheap, and deliberately concrete: every trigger names a field
@@ -105,7 +105,8 @@ const JUDGE_SCHEMA = {
 const SYSTEM = [
   "You judge road-camera observations for a city operations platform.",
   "You receive factual scene descriptions over time. Decide whether they show an",
-  "operational incident: traffic-accident, fallen-signage, road-maintenance, or other.",
+  "operational incident: traffic-accident, fire, fallen-signage, road-maintenance,",
+  "utility-hazard (downed line, gas leak), public-warning (evacuate, shelter), or other.",
   "The observations are facts from a vision system; they contain no judgments.",
   "Judge conservatively: an incident requires clear supporting facts across the",
   "window, not a single ambiguous frame. If the described hazard is no longer",
@@ -127,6 +128,10 @@ export function createObservationJudge({
   localAvailable = () => true,
   clearAfterQuiet = 3,
   now = () => Date.now(),
+  // The ingest-layer take-action triggers (src/transport/triggers.js). A phrase
+  // hit routes deterministically, no detection inference; text with no trigger
+  // and no structured signal is ignored, protecting COCO's shared model.
+  triggers = null,
 } = {}) {
   if (!intents) throw new Error("judge requires the intent store");
 
@@ -138,29 +143,43 @@ export function createObservationJudge({
     try { ledger?.append({ kind: "judge", agent: "omoda:judge", ...entry }); } catch { /* best effort */ }
   };
 
+  // Degraded verdict: strong deterministic signals still escalate (marked
+  // unjudged) rather than silently dropping a possible accident; otherwise
+  // nominal. Used when the model is unavailable OR the call fails at runtime.
+  function degradedVerdict(signals, why) {
+    const strong = signals.includes("interaction:contact_visible") || signals.includes("changes:new_vehicle_contact");
+    return strong
+      ? { is_incident: true, incident_type: "traffic-accident", severity: "medium", reason: `${why}; deterministic signals: ${signals.join(", ")}`, cleared: false, degraded: true }
+      : { is_incident: false, incident_type: "none", severity: "none", reason: `${why}; signals inconclusive`, cleared: false, degraded: true };
+  }
+
   async function judgeCandidate(obs, context, signals) {
     // The same zero-egress rule as every perception path: local model or refusal.
     const decision = route({ task: TASK.CLASSIFY, payload: "", localAvailable: localAvailable() });
     if (!decision.model) {
       record({ tool: "judge.infer", verb: "read", outcome: "degraded", reason: decision.reason });
-      // Degraded mode is honest: strong deterministic signals still escalate,
-      // marked as unjudged, rather than silently dropping a possible accident.
-      const strong = signals.includes("interaction:contact_visible") || signals.includes("changes:new_vehicle_contact");
-      return strong
-        ? { is_incident: true, incident_type: "traffic-accident", severity: "medium", reason: `local model unavailable; deterministic signals: ${signals.join(", ")}`, cleared: false, degraded: true }
-        : { is_incident: false, incident_type: "none", severity: "none", reason: "model unavailable and signals inconclusive", cleared: false, degraded: true };
+      return degradedVerdict(signals, "local model unavailable");
     }
 
-    const out = await inference.complete({
-      model: decision.model,
-      endpoint: decision.endpoint,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: `Signals fired: ${signals.join(", ")}\n\nObservations, oldest first:\n${digest(context)}` },
-      ],
-      maxTokens: 1500,
-      jsonSchema: JUDGE_SCHEMA,
-    });
+    // A runtime inference failure (endpoint unreachable, timeout) must NEVER crash
+    // the observation handler: perception is a firehose, and one failed judgment
+    // degrades, it does not take the platform down. Offline-first (PRD 6.2).
+    let out;
+    try {
+      out = await inference.complete({
+        model: decision.model,
+        endpoint: decision.endpoint,
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: `Signals fired: ${signals.join(", ")}\n\nObservations, oldest first:\n${digest(context)}` },
+        ],
+        maxTokens: 1500,
+        jsonSchema: JUDGE_SCHEMA,
+      });
+    } catch (err) {
+      record({ tool: "judge.infer", verb: "read", outcome: "degraded", reason: `inference failed: ${String(err.message).slice(0, 120)}` });
+      return degradedVerdict(signals, "inference unreachable");
+    }
     stats.inferences += 1;
     const parsed = extractJson(out.text);
     if (!parsed) {
@@ -176,6 +195,15 @@ export function createObservationJudge({
   async function onObservation(obs, context) {
     stats.observations += 1;
     const signals = candidateSignals(obs);
+
+    // The take-action triggers are the ingest layer's quick reference: match the
+    // curated phrase list against the SCENE DESCRIPTION only. The follow-up
+    // question is a prompt ("is there smoke, debris, or a downed sign?"), so
+    // matching it fired triggers on benign frames; training capture showed
+    // debris/signage/obstruction false-positives coming straight from the
+    // question text. The follow-up ANSWER is already a boolean danger signal.
+    const hit = triggers?.match(obs.scene_description ?? "") ?? null;
+    if (hit) signals.push(`trigger:${hit.matchedPhrase}`);
 
     // Quiet observation: advance clearance on any open incidents for this camera.
     if (signals.length === 0) {
@@ -200,10 +228,19 @@ export function createObservationJudge({
       return { verdict: "candidate-skipped-busy", signals };
     }
 
-    inFlight = true;
+    // Deterministic fast path: a trigger phrase names the incident type outright,
+    // so L0 routes to the mapped L1 with no detection inference. The L1 still
+    // uses inference downstream to decide what to do; this only skips the
+    // "is it an incident and of what kind" call the model would otherwise make.
     let j;
-    try { j = await judgeCandidate(obs, context, signals); }
-    finally { inFlight = false; }
+    if (hit) {
+      j = { is_incident: true, incident_type: hit.rule.incidentType, severity: "unranked", reason: `take-action trigger matched: "${hit.matchedPhrase}"`, cleared: false, deterministic: true };
+      record({ tool: "judge.trigger", verb: "read", outcome: "matched", reason: `${hit.matchedPhrase} -> ${hit.rule.incidentType}` });
+    } else {
+      inFlight = true;
+      try { j = await judgeCandidate(obs, context, signals); }
+      finally { inFlight = false; }
+    }
 
     if (!j.is_incident || j.incident_type === "none") {
       record({ tool: "judge.infer", verb: "read", outcome: "nominal-after-judgment", reason: j.reason?.slice(0, 160) });
@@ -252,7 +289,13 @@ export function createObservationJudge({
       detail: { handoff: "incident-intent", incidentType: j.incident_type, severity: j.severity, signals },
     });
     record({ tool: "judge.incident", verb: "create", outcome: "intent-opened", reason: `${j.incident_type} ${j.severity}`, intentId: intent.id });
-    return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals };
+    // The action text from the take-action trigger that fired (or the trigger
+    // rule for this incident type when the model detected it without a phrase),
+    // so the agent-action stream can show what the trigger told the agent to do.
+    const triggerAction = hit?.rule?.action
+      ?? triggers?.list?.().find((r) => r.incidentType === j.incident_type)?.action
+      ?? null;
+    return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals, trigger: hit ? hit.matchedPhrase : null, triggerAction };
   }
 
   return {

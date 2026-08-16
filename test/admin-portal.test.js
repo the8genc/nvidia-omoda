@@ -9,6 +9,8 @@ import { createLedger } from "../src/ledger/ledger.js";
 import { createIntentStore } from "../src/api/intents.js";
 import { checkAdminAuth, DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASS } from "../src/web/admin-auth.js";
 import { loadSkills } from "../src/skills/load.js";
+import { createTriggerStore } from "../src/transport/triggers.js";
+const mkTriggers = () => createTriggerStore({ path: join(mkdtempSync(join(tmpdir(), "omoda-t-")), "t.json") });
 
 const basic = (u, p) => "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
 const ADMIN = basic(DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASS);
@@ -18,12 +20,14 @@ function harness(t) {
   t.after(() => rmSync(skillsDir, { recursive: true, force: true }));
   const applied = [];
   const ledger = createLedger({ path: `/tmp/omoda-portal-${Date.now()}-${Math.random()}.jsonl` });
+  const triggers = mkTriggers();
   const app = createApp({
     tokens: createTokenStore(), ledger, intents: createIntentStore(),
     skillsDir, onApply: () => applied.push(true),
     uiOperator: { id: "operator:arif", scopes: ["intent:decide"] },
+    triggers, l1Agents: ["accident", "fire"],
   });
-  return { app, skillsDir, applied, ledger };
+  return { app, skillsDir, applied, ledger, triggers };
 }
 
 async function req(app, { method = "GET", path, auth = ADMIN, form }) {
@@ -176,4 +180,144 @@ test("an L0 orchestrator deploys with inference and no capabilities", async (t) 
   const { skills } = loadSkills(skillsDir);
   assert.equal(skills[0].grants.inference, true);
   assert.equal(skills[0].grants.tools, "none");
+});
+
+test("the triggers page lists rules and requires the admin credential", async (t) => {
+  const { app } = harness(t);
+  assert.equal((await req(app, { path: "/ui/triggers", auth: null })).status, 401);
+  const r = await req(app, { path: "/ui/triggers" });
+  assert.equal(r.status, 200);
+  assert.match(r.body, /take-action trigger/i);
+});
+
+test("an admin can add a trigger through the portal", async (t) => {
+  const { app, triggers } = harness(t);
+  const csrf = (await req(app, { path: "/ui/triggers" })).body.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  const before = triggers.size;
+  const r = await req(app, { method: "POST", path: "/ui/triggers", form: { csrf, phrases: "rollover, overturned", incidentType: "traffic-accident", l1: "accident", action: "handle it" } });
+  assert.equal(r.status, 200);
+  assert.equal(triggers.size, before + 1);
+  assert.equal(triggers.match("an overturned car").rule.l1, "accident");
+});
+
+test("a forged csrf cannot edit triggers", async (t) => {
+  const { app, triggers } = harness(t);
+  const before = triggers.size;
+  const r = await req(app, { method: "POST", path: "/ui/triggers", form: { csrf: "bad", phrases: "x", l1: "accident" } });
+  assert.equal(r.status, 403);
+  assert.equal(triggers.size, before);
+});
+
+test("the audit page is admin-gated and shows the robust record with the chain state", async (t) => {
+  const { app, ledger } = harness(t);
+  // seed a couple of ledgered actions with the robust linkage fields
+  ledger.append({ kind: "orchestrator", agent: "l0", tool: "l0.review", verb: "read", outcome: "routed-to-l1", reason: "traffic-accident -> accident", intentId: "int-7", triggerPhrase: "collision" });
+  ledger.append({ agent: "emergency-dispatch", tool: "dispatch.unit.request", verb: "create", impact: ["legal"], tier: "consequential", authority: "decision:d-1", decidedBy: "arif", outcome: "executed", intentId: "int-7", target: "POST 100.71.143.26/api/dispatch" });
+
+  // no auth -> 401
+  const noauth = await req(app, { path: "/ui/audit", auth: null });
+  assert.equal(noauth.status, 401);
+
+  // admin -> the full record is present, not just the condensed fields
+  const page = await req(app, { path: "/ui/audit" });
+  assert.equal(page.status, 200);
+  assert.match(page.body, /Audit trail/);
+  assert.match(page.body, /chain verifies/);
+  assert.match(page.body, /emergency-dispatch/);
+  assert.match(page.body, /int-7/, "the incident id links the chain");
+  assert.match(page.body, /collision/, "the trigger word is recorded");
+  assert.match(page.body, /arif/, "who approved is recorded");
+  assert.match(page.body, /api\/dispatch/, "the concrete target call is recorded");
+  assert.match(page.body, /raw/, "the raw hash-chained record is available per row");
+
+  // a filter narrows the query (intent that does not exist -> empty)
+  const empty = await req(app, { path: "/ui/audit?intent=nope" });
+  assert.match(empty.body, /No matching audit records/);
+});
+
+test("the training button is admin-gated and starts/stops the recorder", async (t) => {
+  const { createBus } = await import("../src/bus.js");
+  const { createTrainingRecorder } = await import("../src/training/recorder.js");
+  const { createApp } = await import("../src/api/server.js");
+  const { createTokenStore } = await import("../src/api/auth.js");
+  const { createIntentStore } = await import("../src/api/intents.js");
+  const { createLedger } = await import("../src/ledger/ledger.js");
+  const bus = createBus();
+  const dir = mkdtempSync(join(tmpdir(), "omoda-traindir-"));
+  const training = createTrainingRecorder({ bus, triggers: mkTriggers(), dir });
+  const app = createApp({ tokens: createTokenStore(), ledger: createLedger({ path: `/tmp/omoda-tp-${Date.now()}.jsonl` }), intents: createIntentStore(), training });
+
+  assert.equal((await req(app, { path: "/ui/training", auth: null })).status, 401, "gated");
+  const idle = await req(app, { path: "/ui/training" });
+  assert.match(idle.body, /Agent training capture/);
+  assert.match(idle.body, /Start capture/);
+
+  const csrf = idle.body.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  const started = await req(app, { method: "POST", path: "/ui/training/start", form: { csrf } });
+  assert.match(started.body, /Recording started/);
+  assert.equal(training.status().active, true);
+
+  // a live description now gets recorded
+  bus.publish("observation", { description: "A car is on fire.", verdict: "incident", incidentType: "fire" });
+  const stopped = await req(app, { method: "POST", path: "/ui/training/stop", form: { csrf } });
+  assert.match(stopped.body, /Stopped\./);
+  assert.equal(training.status().active, false);
+  assert.equal(training.status().tally.total, 1);
+
+  // csrf is enforced
+  assert.equal((await req(app, { method: "POST", path: "/ui/training/start", form: { csrf: "bad" } })).status, 403);
+});
+
+test("the demo page fires a real gated escalation to Telegram (admin only)", async (t) => {
+  const { createApp } = await import("../src/api/server.js");
+  const { createTokenStore } = await import("../src/api/auth.js");
+  const { createIntentStore } = await import("../src/api/intents.js");
+  const { createLedger } = await import("../src/ledger/ledger.js");
+  const { buildCapabilityIndex, loadSkills } = await import("../src/skills/load.js");
+
+  const index = buildCapabilityIndex(loadSkills().skills);
+  const intents = createIntentStore();
+  const sends = [];
+  // stand-in for the escalation hook the live boot wires to telegramClient.escalate
+  const demo = {
+    configured: () => true,
+    gatedTools: () => index.all().filter((r) => r.consent && r.consent !== "none").map((r) => ({ tool: r.tool, verb: r.verb, impact: r.impact ?? [], consent: r.consent, agent: r.agent })),
+    async trigger(tool) {
+      const row = index.lookup(tool);
+      if (!row || !row.consent || row.consent === "none") return { ok: false, reason: "not gated" };
+      const { intent } = intents.propose({ idempotencyKey: `demo-${tool}-${Date.now()}`, caller: { id: "admin:demo", scopes: ["intent:propose"] }, body: { kind: "demo", requested_outcome: `DEMO ${tool}` } });
+      const action = { actionId: "demo-x", intentId: intent.id, agent: row.agent, tool, verb: row.verb, impact: row.impact ?? [] };
+      intents.awaitConsent(intent.id, action);
+      sends.push({ chatId: 111, intent, action });   // the "Telegram send"
+      return { ok: true, tool, consent: row.consent, intentId: intent.id };
+    },
+  };
+  const app = createApp({ tokens: createTokenStore(), ledger: createLedger({ path: `/tmp/omoda-demo-${Date.now()}.jsonl` }), intents, demo });
+
+  assert.equal((await req(app, { path: "/ui/demo", auth: null })).status, 401, "gated");
+  const page = await req(app, { path: "/ui/demo" });
+  assert.match(page.body, /Trigger a dangerous action/);
+  assert.match(page.body, /dispatch.unit.request/, "a gated tool is listed");
+
+  const csrf = page.body.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  const fired = await req(app, { method: "POST", path: "/ui/demo/trigger", form: { csrf, tool: "dispatch.unit.request" } });
+  assert.equal(fired.status, 200);
+  assert.match(fired.body, /Sent to the operator/);
+  assert.equal(sends.length, 1, "a Telegram approval was sent");
+  assert.equal(sends[0].action.tool, "dispatch.unit.request");
+  // the intent+action are in the store so the operator's tap can decide
+  assert.equal(intents.get(sends[0].intent.id).actions[0].tool, "dispatch.unit.request");
+
+  assert.equal((await req(app, { method: "POST", path: "/ui/demo/trigger", form: { csrf: "bad", tool: "dispatch.unit.request" } })).status, 403);
+});
+
+test("a demo intent is not routed by the planner (no double-escalation)", async () => {
+  const { createOrchestrator } = await import("../src/orchestrator.js");
+  const { buildCapabilityIndex, loadSkills } = await import("../src/skills/load.js");
+  const { createLedger } = await import("../src/ledger/ledger.js");
+  const index = buildCapabilityIndex(loadSkills().skills);
+  const l0 = createOrchestrator({ intents: { awaitConsent() {} }, registry: index, ledger: createLedger({ path: `/tmp/omoda-demoq-${Date.now()}.jsonl` }), client: { async complete() { throw new Error("planner should not be called for a demo intent"); } } });
+  const r = await l0.onIntent({ id: "int-demo", kind: "demo", requestedOutcome: "DEMO" });
+  assert.equal(r.routed, false);
+  assert.match(r.reason, /demo intent/);
 });
