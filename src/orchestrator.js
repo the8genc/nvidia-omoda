@@ -15,6 +15,7 @@ import { planAction, PlanRefused } from "./models/plan.js";
 import { consentKind } from "./domain/taxonomy.js";
 import { telemetry } from "./telemetry/agentic.js";
 import { candidateSignals } from "./coco/judge.js";
+import { narrateResponse } from "./telemetry/narrate.js";
 
 // L0's routing table: which L1 domain agent owns which incident type. This is
 // the deterministic half of "route to an L1". A confirmed incident_type maps
@@ -49,7 +50,7 @@ export function l1FromSignals(signals) {
  * @param {() => boolean} [opts.localAvailable]
  * @param {object} [opts.knowledge] retrieval store for L1 context injection
  */
-export function createOrchestrator({ intents, registry, ledger, client, localAvailable = () => true, knowledge = null, judge = null } = {}) {
+export function createOrchestrator({ intents, registry, ledger, client, localAvailable = () => true, knowledge = null, judge = null, bus = null, levelMap = null } = {}) {
   if (!intents || !registry) throw new Error("orchestrator requires intents and the registry");
 
   const record = (entry) => {
@@ -145,6 +146,13 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
       const l1 = L1_BY_INCIDENT[verdict.incidentType] ?? deterministicL1 ?? "roadside";
       record({ tool: "l0.review", outcome: "routed-to-l1", reason: `${verdict.incidentType ?? "?"} -> ${l1}`, intentId: verdict.intentId });
       telemetry.route({ actor: "l0", target: l1, intentId: verdict.intentId, detail: { decision: "route-to-l1", incidentType: verdict.incidentType, signals, inferenceUsed: true } });
+      // Narrate the whole response flow down the org chart, but only when a NEW
+      // incident opens (not on every subsequent frame of the same incident).
+      if (verdict.verdict === "incident" && bus) {
+        for (const ev of narrateResponse({ incidentType: verdict.incidentType, l1, intentId: verdict.intentId }, levelMap)) {
+          bus.publish("agent", ev);
+        }
+      }
       return { ...verdict, reviewed: true, routedToL1: l1, signals, inferenceUsed: true };
     }
 

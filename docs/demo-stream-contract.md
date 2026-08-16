@@ -39,21 +39,38 @@ The demo app renders this as the live "what are the agents doing" panel; the
 
 ## The agent-action stream (`/v1/out/agents`)
 
-Compact by design: one event per action an agent takes, carrying only what the
-dashboard renders.
+Human-prose, for display. Each event leads with a `headline` sentence describing
+what is happening in the flow right now; the structured fields are there for the
+UI to style, but the sentence is the point. Every hop down the org chart is a
+separate event: OMODA (L0) handing to a domain expert (L1), an L1 to a worker
+(L2), a worker to the tool specialist (L3).
 
-| field | meaning |
-|---|---|
-| `name` | the agent's name (`finance`, `accident`, `emergency-dispatch`, `l0`, `operator:arif`) |
-| `level` | its org-chart level: `0`–`3` for L0–L3 agents, `"operator"` for the human, `"input"` for a camera/See feed, `null` if unranked |
-| `action` | what it is doing: verb + tool, e.g. `create quickbooks.invoice.create` |
-| `instruction` | what it was told to do: the reason/outcome it was given |
-| `outcome` | result: `executed`, `admitted`, `refused`, `escalated`, `undone`… (colour by `tier`) |
-| `seq` | the ledger sequence number |
+Two `kind`s:
 
-The full hash-chained record (authority, hash, prevHash, payload) is not on this
-wire; it stays on disk and on `GET /v1/ledger`, one `seq` lookup away for anyone
-auditing. The stream is for display; the audit is for proof.
+**`handoff`** — one agent relying on another:
+```
+{ topic:"agent", at, kind:"handoff", intentId,
+  headline:"OMODA handed off to the fire domain expert (L1) to take the fire and coordinate the response.",
+  agent:   { name:"l0", level:0, role:"orchestrator" },
+  relies_on:[{ name:"fire", level:1, role:"domain expert" }],
+  doing:"take the fire and coordinate the response",
+  dangerous:false }
+```
+A dangerous hop (the 911 calls) sets `dangerous:true` and the headline says it is
+held for human approval.
+
+**`action`** — one agent doing a ledgered thing:
+```
+{ topic:"agent", at, kind:"action", seq, intentId,
+  headline:"The emergency dispatch tool specialist (L3) needs human approval before it can dispatch.unit.request; the capability does not exist until then.",
+  agent:{ name:"emergency-dispatch", level:3, role:"tool specialist" },
+  action:"create dispatch.unit.request", instruction:"…", outcome:"escalated", tier:"consequential" }
+```
+
+`level` is the org-chart rank (`0`–`3`), `"operator"` for the human, `"input"`
+for a camera/See feed. L0 is named **OMODA** in prose, since that is the
+interface. The full hash-chained record stays on disk and on `GET /v1/ledger`,
+one `seq` away; this stream is for the story, the ledger is for the proof.
 
 ## The agentic narration stream (`/v1/out/agentic`)
 
