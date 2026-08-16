@@ -18,6 +18,8 @@ observation, and republishes everything plus its own agent activity on
 `ws://…:3111/v1/out/*` for the demo dashboard
 ([`docs/demo-stream-contract.md`](docs/demo-stream-contract.md)).
 
+**Full architecture (both halves, one diagram): [`ARCHITECTURE.md`](ARCHITECTURE.md).**
+
 ---
 
 ## Status, 2026-08-16

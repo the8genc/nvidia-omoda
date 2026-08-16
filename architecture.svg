@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 860" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrTeal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1320" height="860" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="660" y="40" text-anchor="middle" font-size="26" font-weight="700" fill="#0f172a">See to Do</text>
+  <text x="660" y="66" text-anchor="middle" font-size="15" fill="#475569">One box. Privacy at the sensor, governance at the action.</text>
+
+  <!-- the box (outer) -->
+  <rect x="28" y="88" width="1264" height="700" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="48" y="112" font-size="13" font-weight="600" fill="#64748b">One box · NVIDIA DGX Spark (GB10) · tailnet only · nothing leaves except what the rules allow</text>
+
+  <!-- ===================== SEE column ===================== -->
+  <text x="90" y="150" font-size="17" font-weight="700" fill="#0d9488">SEE · First Light</text>
+  <text x="90" y="170" font-size="12" fill="#64748b">see/  (privacy shield)</text>
+
+  <!-- camera -->
+  <rect x="60" y="196" width="96" height="54" rx="8" fill="#ecfeff" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="108" y="219" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">CCTV</text>
+  <text x="108" y="236" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">camera</text>
+
+  <!-- privacy shield -->
+  <rect x="196" y="188" width="300" height="70" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="346" y="214" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Privacy shield · FastSAM</text>
+  <text x="346" y="235" text-anchor="middle" font-size="12.5" fill="#334155">segments + flattens to blobs, real time on GPU</text>
+  <line x1="156" y1="223" x2="192" y2="223" stroke="#0d9488" stroke-width="1.8" marker-end="url(#arrTeal)"/>
+
+  <!-- watchdog VLM -->
+  <rect x="196" y="288" width="300" height="92" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="346" y="313" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Watchdog VLM · Nemotron Omni</text>
+  <text x="346" y="334" text-anchor="middle" font-size="12.5" fill="#334155">every 5s on the raw frame:</text>
+  <text x="346" y="352" text-anchor="middle" font-size="12.5" fill="#334155">describe scene  →  "anyone in danger?"</text>
+  <text x="346" y="370" text-anchor="middle" font-size="11.5" fill="#64748b">frames discarded after use · nothing recorded</text>
+  <line x1="346" y1="258" x2="346" y2="286" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="356" y="277" font-size="11" fill="#64748b">raw frame</text>
+
+  <!-- digital twin (future) -->
+  <rect x="196" y="410" width="300" height="64" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="346" y="435" text-anchor="middle" font-size="13.5" font-weight="700" fill="#334155">Digital twin · Open-d4rt  (future)</text>
+  <text x="346" y="454" text-anchor="middle" font-size="12" fill="#64748b">monocular depth, road-plane anchored, ~30ms</text>
+
+  <!-- obfuscated stream out -->
+  <line x1="496" y1="223" x2="1250" y2="223" stroke="#0d9488" stroke-width="1.6" marker-end="url(#arrTeal)"/>
+  <text x="820" y="216" text-anchor="middle" font-size="12" fill="#0d9488">obfuscated blobs → the only stream that leaves by default (dashboard)</text>
+
+  <!-- break glass -->
+  <line x1="496" y1="330" x2="560" y2="330" stroke="#dc2626" stroke-width="1.8" marker-end="url(#arrRed)"/>
+  <text x="528" y="322" text-anchor="middle" font-size="11.5" font-weight="600" fill="#dc2626">emergency</text>
+  <text x="528" y="348" text-anchor="middle" font-size="11.5" font-weight="600" fill="#dc2626">→ raw video</text>
+
+  <!-- ===================== seam ===================== -->
+  <line x1="496" y1="334" x2="612" y2="334" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="556" y="304" text-anchor="middle" font-size="11.5" fill="#334155">observations</text>
+  <text x="556" y="320" text-anchor="middle" font-size="11.5" fill="#334155">(scene + danger?)</text>
+  <text x="556" y="372" text-anchor="middle" font-size="10.5" fill="#94a3b8">ws://…:8091</text>
+
+  <!-- ===================== DO column ===================== -->
+  <text x="622" y="150" font-size="17" font-weight="700" fill="#2563eb">DO · OMODA</text>
+  <text x="622" y="170" font-size="12" fill="#64748b">repo root  (autonomy broker)</text>
+
+  <!-- L0 -->
+  <rect x="616" y="300" width="300" height="70" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="766" y="326" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">L0 · OMODA — judge every frame</text>
+  <text x="766" y="347" text-anchor="middle" font-size="12.5" fill="#334155">take-action triggers first, Nemotron when unsure</text>
+  <text x="766" y="363" text-anchor="middle" font-size="11.5" fill="#64748b">quiet street = zero inference; opens an incident</text>
+
+  <!-- org chart -->
+  <rect x="616" y="398" width="300" height="66" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="766" y="423" text-anchor="middle" font-size="13.5" font-weight="700" fill="#0f172a">L1 domain → L2 worker → L3 specialist</text>
+  <text x="766" y="443" text-anchor="middle" font-size="12" fill="#334155">rank set by injection; L3 holds the egress</text>
+  <line x1="766" y1="370" x2="766" y2="396" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- broker -->
+  <rect x="616" y="492" width="300" height="80" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="1.6"/>
+  <text x="766" y="517" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Autonomy Broker + Compiler</text>
+  <text x="766" y="538" text-anchor="middle" font-size="12.5" fill="#334155">verb × impact → none / review / approval / two-person</text>
+  <text x="766" y="556" text-anchor="middle" font-size="12" font-weight="600" fill="#b45309">write is absent from policy until a decision</text>
+  <line x1="766" y1="464" x2="766" y2="490" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- openshell layer 3 -->
+  <rect x="616" y="600" width="300" height="56" rx="10" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+  <text x="766" y="624" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">OpenShell · Layer 3 (NemoClaw)</text>
+  <text x="766" y="642" text-anchor="middle" font-size="11.5" fill="#334155">Landlock · deny-by-default egress · credential brokering</text>
+  <line x1="766" y1="572" x2="766" y2="598" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+
+  <!-- telegram -->
+  <rect x="968" y="300" width="284" height="86" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="1.6"/>
+  <text x="1110" y="326" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Operator · Telegram</text>
+  <text x="1110" y="347" text-anchor="middle" font-size="13" font-weight="700" fill="#b45309">Approve  /  Deny</text>
+  <text x="1110" y="366" text-anchor="middle" font-size="11.5" fill="#334155">the tap creates the capability, for one call</text>
+  <path d="M916 500 C 946 500, 946 360, 966 350" fill="none" stroke="#b45309" stroke-width="1.8" marker-end="url(#arrRed)"/>
+  <text x="946" y="430" text-anchor="middle" font-size="11" fill="#b45309">escalate</text>
+
+  <!-- service layer -->
+  <rect x="968" y="470" width="284" height="118" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="1110" y="495" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Service layer · :3120</text>
+  <text x="1110" y="516" text-anchor="middle" font-size="12.5" fill="#334155">911 · roads · utility · procurement</text>
+  <text x="1110" y="533" text-anchor="middle" font-size="12.5" fill="#334155">evidence · public comms</text>
+  <text x="1110" y="553" text-anchor="middle" font-size="11.5" fill="#64748b">gated calls derived from the manifest;</text>
+  <text x="1110" y="569" text-anchor="middle" font-size="11.5" fill="#64748b">reads &amp; reversible writes run free</text>
+  <!-- execute on approval -->
+  <path d="M1110 386 L 1110 468" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="1150" y="430" text-anchor="middle" font-size="11" font-weight="600" fill="#16a34a">execute once</text>
+  <!-- openshell governs the call -->
+  <line x1="916" y1="628" x2="1110" y2="628" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="1110" y1="628" x2="1110" y2="590" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="1010" y="620" text-anchor="middle" font-size="10.5" fill="#64748b">governs the egress</text>
+
+  <!-- audit ledger -->
+  <rect x="616" y="686" width="636" height="58" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+  <text x="934" y="710" text-anchor="middle" font-size="13.5" font-weight="700" fill="#0f172a">Hash-chained audit ledger · /ui/audit · /v1/out/audit</text>
+  <text x="934" y="730" text-anchor="middle" font-size="12" fill="#334155">escalate → approve → capability materialised → executed → reverted</text>
+  <line x1="766" y1="656" x2="766" y2="684" stroke="#334155" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="1110" y1="588" x2="1110" y2="684" stroke="#334155" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+  <!-- footer banner -->
+  <text x="660" y="812" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">
+    <tspan fill="#0d9488">privacy at the sensor</tspan><tspan fill="#64748b">    ·    </tspan><tspan fill="#2563eb">governance at the action</tspan>
+  </text>
+  <text x="660" y="834" text-anchor="middle" font-size="11.5" fill="#94a3b8">both on the box · both decide against a published rule · both keep an audit trail of every time the glass was broken</text>
+</svg>
