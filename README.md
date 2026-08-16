@@ -16,7 +16,7 @@ Built and deployed. Running on the box under systemd, not a laptop demo.
 |---|---|
 | Broker, Action API, SSR UI, WebSocket ingest | live on the GB10, `omoda.service`, survives reboot |
 | Policy enforcement | real OpenShell sandbox, not an in-process simulation |
-| Nemotron | local vLLM, NVFP4, 64k context, **choosing tools in the live path** |
+| Nemotron | **two NVIDIA models, all local**: Omni (NVFP4, 64k) plans, perceives, and transcribes voice; Llama Nemotron Embed (NeMo Retriever) serves retrieval |
 | Operator channel | Telegram, real approvals recorded end to end |
 | Layer 1 seam | paired to the OpenClaw gateway, protocol 4, 171 methods |
 | All three layers | **running together against the live gateway**, `npm run demo:layers` |
@@ -32,8 +32,10 @@ Measured, including where it fell short:
   actions instead of 9 of 9. The ratio is bounded by how many actions are
   consequential, so this is the shape of the task, not a tuning knob. Reported as
   measured; `node scripts/benchmark-g1.mjs` reproduces it.
-- **One Nemotron in two roles, not two models.** The box caches one and has no
-  hosted API key, so the second model earlier drafts described could never have run.
+- **Two NVIDIA models in four load-bearing roles**, both on the box, per their own
+  playbooks: structured outputs for planning (native tool_calls tested live and
+  found empty next to the reasoning parser), the model-card serve command for the
+  NeMo Retriever embedder, reasoning budgets sized as the docs require.
 
 Blocked on the See team: detector classes, the manual runbook, and the WebSocket
 direction ([#13](https://github.com/the8genc/nvidia-omoda/issues/13),

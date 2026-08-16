@@ -159,7 +159,7 @@ is given rather than the aspiration.
 | G4 | **The shared box survives**: outages we caused, OOM kills, binds outside 3100-3199 | 0 | **0** | Port audit; the shared vLLM is capped and documented in `docs/shared-infra.md` |
 | G5 | **Policy reverts**: deltas still present after the action or the window | 0 | **0** | Envelope re-read after revert; a failed revert throws `HALT` |
 | G6 | **Irreversible actions recoverable**: update/delete with an inverse registered before execution | 100% | **100%** | Broker refuses a contained write with no registered inverse |
-| G7 | **Multi-model is load-bearing** | 2+ distinct Nemotron models | **1 model, 2 roles** (not met as written) | See §4.1 |
+| G7 | **Multi-model is load-bearing** | 2+ distinct Nemotron models | **MET: 2 models, 4 roles** (as of the v4 build) | See §4.1 |
 | G8 | **Audit completeness**: dangerous actions with a complete ledger record | 100% | **100%** | Hash-chained ledger, fsynced before execution; chain verifies |
 | G9 | **Operator latency**: escalation to decision to policy applied | under 60 s | **met in live runs** | Real Telegram tap, measured end to end |
 | G10 | **Test quality**: coverage on Broker, Compiler, Ledger | 80% | **94.36% line, 81.81% branch** | `npm run test:coverage`, 161 tests |
@@ -182,12 +182,14 @@ more read-heavy task would, and stretching the task to hit a number would be
 measuring our own thumb. The honest claim is that OMODA removes the human from
 every action that cannot hurt anyone, and from none of the ones that can.
 
-**G7 ships as one model in two roles, not two models.** The box has exactly one
-Nemotron in the cache, `Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4`, and no
-NVIDIA hosted API key, so the "hosted planner" that earlier drafts of this document
-described could never have run. Rather than claim a second model, §7 now describes
-what actually runs: one Nemotron serving both the planning role and the perception
-role, on the local Spark, with the serving model recorded per call.
+**G7 was one model in two roles for most of Saturday, and is now met properly.**
+The "hosted planner" earlier drafts described could never have run (no second model
+cached, no NVIDIA API key), and this section said so. The v4 build then added a
+second NVIDIA model the right way: `nvidia/llama-nemotron-embed-1b-v2` (NeMo
+Retriever family, 1.2B) serving the retrieval store, stood up on the box exactly as
+its model card instructs and capped at 6% of memory. Two distinct NVIDIA models now
+carry four distinct roles, all local: Omni plans, perceives, and transcribes voice;
+Nemotron Embed retrieves. The serving model is recorded per call either way.
 
 ---
 
@@ -296,8 +298,20 @@ distinct roles, entirely on the Spark.
 |---|---|---|---|
 | **Planner and tool-caller** | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4` | **Local**, vLLM on `:8000` | Given an intent and the complete registry, it chooses which declared tool addresses the request and says why. Measured at **8.0 s** for a tool selection on the GB10 |
 | **Perception and risk classification** | the same model | **Local**, same instance | Text, image, video and audio in one model, so no separate VLM is needed. On-box means a sensitive artifact is classified with **zero egress**, which is the real reason it stays local |
+| **Voice transcription** (the v4 Telegram door) | the same model | **Local**, same instance | An operator's voice note is audio evidence; it is transcribed on the box for the same zero-egress reason, then S8-screened like any evidence |
+| **Retrieval embeddings** (the v4 proxy layer) | `nvidia/llama-nemotron-embed-1b-v2` | **Local**, vLLM on `:3140`, 6% memory cap | NeMo Retriever family, served exactly per its model card (`vllm serve --trust-remote-code`). Queries and passages embed with their proper `input_type`. Lexical scoring remains only as a labeled fallback |
 
-**Why one model and not three.** The box holds exactly one Nemotron in its cache
+**Playbooks, not just weights.** The implementation follows NVIDIA's documented
+patterns rather than home-rolled equivalents: the planner uses **vLLM structured
+outputs** (schema-constrained decoding via `response_format: json_schema`), chosen
+after live testing showed native `tool_calls` returning empty alongside the
+`nemotron_v3` reasoning parser; reasoning models get the token budget the docs say
+they need (a too-small `max_tokens` burns entirely inside the think block and
+returns nothing); reasoning content is separated by the serving stack's parser, not
+by regex alone; and the embedder is launched with the exact command on its model
+card.
+
+**Why one generative model and not two.** The box holds exactly one Nemotron in its cache
 and there is no NVIDIA hosted API key on it, so the `integrate.api.nvidia.com`
 planner described in earlier drafts of this document could never have run. A second
 30B would also have to share 121 GiB of unified memory with another team. Shipping

@@ -19,6 +19,7 @@ import { createTelegramClient, createHttpTransport } from "./channels/telegram.j
 import { createTelegramLoop } from "./channels/telegram-loop.js";
 import { createModalityTransform } from "./channels/modality.js";
 import { createInferenceClient } from "./models/client.js";
+import { createKnowledgeStore, createNemotronEmbedder } from "./knowledge/store.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -92,7 +93,21 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     limiter: createRateLimiter({ capacity: 120, refillPerSec: 2 }),
     skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, registry: s.registry })),
     uiOperator: operator,
+    knowledge,
   });
+
+  // The proxy layer's retrieval store (PRD 23.2). NeMo Retriever embeddings
+  // when the on-box embed server answers; lexical otherwise, labeled as such.
+  const embedEndpoint = process.env.OMODA_EMBED_ENDPOINT ?? "http://127.0.0.1:3140/v1/embeddings";
+  let embedder = null;
+  try {
+    const probe = await fetch(embedEndpoint.replace(/\/v1\/embeddings$/, "/health"), { signal: AbortSignal.timeout(2500) });
+    if (probe.ok) embedder = createNemotronEmbedder({ endpoint: embedEndpoint });
+  } catch { /* embed server down; the store labels itself lexical */ }
+  const knowledge = createKnowledgeStore({
+    dir: process.env.OMODA_KNOWLEDGE ?? "var/knowledge", embedder, ledger,
+  });
+  knowledge.backend = embedder ? embedder.name : "lexical (embed server down)";
 
   const ingest = createStreamIngest({ tokens, intents, ledger });
   await new Promise((r) => app.server.listen(port, host, r));
@@ -150,6 +165,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${host}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}` : ""}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
+    line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
     line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
@@ -170,7 +186,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("");
   }
 
-  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient, upstream,
+  return { app, ingest, streamServer, tokens, ledger, intents, policy, skills, index, merged, operator, see, telegram, telegramClient, upstream, knowledge,
     async close() {
       telegram?.stop();
       upstream?.stop();

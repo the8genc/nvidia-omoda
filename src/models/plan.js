@@ -62,6 +62,10 @@ export async function planAction({
   localAvailable = true,
   hostedAvailable = true,
   maxTokens = 400,
+  // Retrieved knowledge (PRD 23.2): pertinent chunks from the proxy layer's
+  // store, injected as reference material. It tightens the choice; it is never
+  // authority, and it is screened text by the time it reaches here.
+  context = "",
 }) {
   const rows = registry.all();
   const decision = routing ?? route({
@@ -80,6 +84,7 @@ export async function planAction({
   const user = [
     `Intent: ${intent?.requestedOutcome ?? "(none stated)"}`,
     intent?.detector ? `Reported by detector: ${intent.detector}` : null,
+    context ? `\n${context}` : null,
     "",
     "Tools that exist:",
     renderCatalog(rows),
@@ -89,7 +94,21 @@ export async function planAction({
     model: decision.model,
     endpoint: decision.endpoint,
     messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }],
-    maxTokens,
+    // Reasoning models spend tokens thinking before they answer; the budget has
+    // to cover both (finish_reason "length" with empty content is what running
+    // this too tight looks like). Structured output constrains the answer to
+    // the proposal schema so parsing cannot fail; extractJson stays as the
+    // fallback for a server without the feature.
+    maxTokens: Math.max(maxTokens, 1200),
+    jsonSchema: {
+      name: "proposal",
+      schema: {
+        type: "object",
+        properties: { tool: { type: ["string", "null"] }, reason: { type: "string" } },
+        required: ["tool", "reason"],
+        additionalProperties: false,
+      },
+    },
   });
 
   const parsed = extractJson(out.text);
