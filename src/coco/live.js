@@ -78,13 +78,23 @@ export function createCocoLive({
     try { ledger?.append({ kind: "coco-live", verb: "read", ...entry }); } catch { /* best effort */ }
   };
 
-  /** One frame in, one frame out. Relayed verbatim plus sequence metadata. */
+  /**
+   * One frame in, one frame out, ZERO re-encode. At 30 fps and ~78 KB per
+   * frame, JSON.parse plus re-stringify is an escape pass over megabytes of
+   * base64 every second on the same event loop that runs the whole platform.
+   * Instead: a cheap shape check, a regex for seq, and our envelope header
+   * spliced onto COCO's raw JSON so subscribers receive the contract shape
+   * without the payload ever being decoded here.
+   */
   function handleFrame(raw) {
-    let frame;
-    try { frame = LiveFrame.parse(JSON.parse(String(raw))); }
-    catch { return { kind: "rejected", reason: "malformed frame" }; }
-    bus.publish("frame", { seq: frame.seq, index: frame.index ?? null, rgb: frame.rgb });
-    return { kind: "frame", seq: frame.seq };
+    const s = String(raw);
+    const brace = s.indexOf("{");
+    if (brace === -1 || !s.includes('"rgb"')) return { kind: "rejected", reason: "malformed frame" };
+    const seqMatch = s.match(/"seq"\s*:\s*(\d+)/);
+    const seq = seqMatch ? Number(seqMatch[1]) : null;
+    const precomposed = `{"topic":"frame","at":"${new Date(now()).toISOString()}",${s.slice(brace + 1)}`;
+    bus.publish("frame", { seq, precomposed });
+    return { kind: "frame", seq };
   }
 
   /** One description in: normalize, judge, publish description PLUS verdict. */

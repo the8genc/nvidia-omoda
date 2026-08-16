@@ -55,15 +55,35 @@ test("the bus publishes to subscribers and isolates a throwing one", () => {
 });
 
 // ── the live shapes ────────────────────────────────────────────────────────
-test("a live frame is relayed on the bus verbatim, never judged", async () => {
+test("a live frame is relayed with zero re-encode: envelope spliced, payload untouched, never judged", async () => {
   const { bus, live, inference } = harness();
   const frames = [];
   bus.subscribe("frame", (e) => frames.push(e));
   const r = live.handleFrame(JSON.stringify({ seq: 287303, index: 14747, rgb: TINY_JPEG }));
   assert.equal(r.kind, "frame");
   assert.equal(frames[0].seq, 287303);
-  assert.equal(frames[0].rgb, TINY_JPEG);
+  // What a subscriber receives parses to the contract shape, and the rgb bytes
+  // are byte-identical to COCO's without ever being decoded in the hub.
+  const wire = JSON.parse(frames[0].precomposed);
+  assert.equal(wire.topic, "frame");
+  assert.equal(wire.seq, 287303);
+  assert.equal(wire.rgb, TINY_JPEG);
+  assert.ok(frames[0].precomposed.includes(TINY_JPEG), "payload spliced, not re-escaped");
   assert.equal(inference.calls.length, 0);
+});
+
+test("a slow frame subscriber is capped at about two frames of standing queue, not two megabytes", async () => {
+  const { bridgeSocket } = await import("../src/api/outputs.js");
+  const bus2 = createBus();
+  const sends = [];
+  const viewer = { readyState: 1, bufferedAmount: 0, send: (d) => sends.push(d), on() {} };
+  bridgeSocket({ ws: viewer, bus: bus2, topic: "frame" });
+  viewer.bufferedAmount = 200 * 1024; // ~2.5 frames already queued
+  bus2.publish("frame", { seq: 1, precomposed: "{}" });
+  assert.equal(sends.length, 0, "beyond ~2 frames the clock is protected, drops take the slack");
+  viewer.bufferedAmount = 100 * 1024; // just over one frame queued: still sends
+  bus2.publish("frame", { seq: 2, precomposed: "{}" });
+  assert.equal(sends.length, 1);
 });
 
 test("the followup danger boolean and the hazard lexicon both make candidates", () => {
