@@ -964,3 +964,87 @@ same front matter without the prose.
 | Proxy: retrieval + admin upload | no | new: lexical store, `/ui/knowledge` upload page, L1 context injection |
 | L0 orchestrator | `src/models/plan.js` chooses tools via Nemotron | formalize as L0 on the live intake path |
 | L1/L2/L3 contracts | implicit in Broker + gateway client | new: `level` in the manifest, structural injection by level, compile-time refusal |
+
+---
+
+## 24. COCO integration: the See-to-Do merge
+
+Source: "COCO PRD: City Intersection Video Understanding" (2026-08-15, P0 frozen).
+COCO is the See team's product on the same box: it replays a prerecorded
+intersection CCTV feed as RTSP, captions five-second windows through **the same
+local Nemotron Omni we serve**, normalizes to Observation Schema v1, and
+publishes over a WebSocket **that COCO hosts**. OMODA subscribes.
+
+The boundary is written into both PRDs and it is the two-axis taxonomy wearing a
+city-operations costume: COCO emits only visible facts and is forbidden from
+emitting `is_anomaly`, severity, intent, or recommendations; **OMODA owns
+normal-versus-anomalous judgment, incident classification, severity, response
+planning, autonomy tier, approval, execution, undo, the ledger, and resolution.**
+A camera stays an input channel; consent stays ours.
+
+### 24.1 What this resolves
+
+| Open item | Resolution |
+|---|---|
+| #25 WebSocket direction | **Decided: COCO serves, OMODA dials.** `OMODA_STREAM_CONNECT` (built Saturday) points at `ws://<see-host>:<port>/observations` |
+| #13 detector and classes | Detector is the COCO observation stream; classes are **traffic-accident, fallen-signage, road-maintenance**. The manual runbook for the G1 control arm is still theirs to supply |
+| #37 final checkbox | The partner URL now has a name; wiring is config, not code |
+
+### 24.2 What OMODA must add
+
+**A COCO adapter on the dialed stream.** Observation Schema v1 is not our stream
+envelope: `type: observation` frames carry `scene_description`, `vehicles`,
+`visible_interactions`, `changes_from_previous`, `evidence_ref`; there is no
+`requested_outcome` because an observation requests nothing. `stream_status` and
+`observation_error` frames are operational telemetry, ledgered and never intents.
+
+**An Observation Judge, because judgment is OMODA's whole job here.** COCO emits
+an observation roughly every five seconds, mostly nominal. The judge holds a
+rolling temporal context per camera (their PRD is explicit: reason across
+`changes_from_previous`, not per-caption) and decides normal versus incident.
+
+Two stages, for one load-bearing reason: **the shared model is COCO's critical
+path** (one captioning call every five seconds, no overlapping requests), so
+OMODA must not double its load by consulting Nemotron per observation.
+
+1. **Deterministic candidate filter**, no model call: an observation is a
+   candidate only on concrete signals such as `visible_interactions[].contact_visible`,
+   `changes_from_previous.new_vehicle_contact`, vehicles stopped inside the
+   intersection with obstructed flow, signs `fallen`/`detached` or occupying road
+   area, `visible_road_damage`/`debris`/`flooding`, or a pedestrian
+   `fallen_or_prone`. Quiet footage costs zero inference.
+2. **Nemotron judgment on candidates only**, structured output, over a compact
+   digest of the last few observations: `{is_incident, incident_type, severity,
+   reason, cleared}`. These are exactly the attributes COCO is prohibited from
+   emitting, produced by the party that owns them. At most one judge inference in
+   flight; if the model is busy the observation is held, never queued behind
+   COCO's captioning.
+
+**Incident lifecycle.** A confirmed incident opens ONE intent per
+(camera, incident type) with the COCO `evidence_ref` attached; subsequent
+observations of the same incident attach as occurrences rather than new intents;
+when the hazard visibly clears, the judge records resolution. From the intent on,
+everything is the existing machinery: classification to consent stage, escalation
+to Telegram, approval-scoped capability, hash-chained ledger.
+
+**The negative test is a first-class requirement.** COCO's acceptance says
+nominal footage must not invent a collision; ours says nominal observations must
+produce **zero intents and zero model calls**. Their metric, our gate.
+
+### 24.3 Success criteria for the merge
+
+- Do identifies the intended traffic accident **using only the observation
+  stream** (their product-level acceptance metric, verbatim), demonstrated as:
+  accident observations arrive, the judge opens an intent, the response workflow
+  escalates, a human approves, the capability exists for one call, the ledger
+  holds the trail with COCO's evidence window in it.
+- Three consecutive See-to-Do runs (their M5), against their socket when both
+  services are up, against a recorded observation fixture otherwise.
+- Delivery-to-judgment inside their 10-second latency budget for candidates.
+
+### 24.4 Flagged for a human decision
+
+Their PRD says **"Submission: one combined See-to-Do product in a monorepo."**
+Merging repositories is an organizational act affecting both teams' history and
+CI; OMODA will not do it unilaterally. Tracked as an issue for Arif and the See
+team to decide before the 11:00 freeze.

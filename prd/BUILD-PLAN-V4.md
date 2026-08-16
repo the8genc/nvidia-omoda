@@ -73,3 +73,27 @@ Small, testable, and they unblock everything Sunday.
   except possibly none at all.
 - The demo ledger stays clean (`demo-<ts>.jsonl`), and the exposed bot token and
   gateway token rotate after the demo (#18).
+
+## Addendum, Saturday night: the COCO merge (PRD section 24)
+
+COCO's PRD landed and reorders the remaining night. It answers #25 (they serve,
+we dial) and defines the incident classes; it adds the adapter and the judge.
+
+Revised order for the remaining hours:
+
+1. **COCO adapter + Observation Judge** (new, demo-critical): schema-v1 frames in,
+   deterministic candidate filter, Nemotron structured-output judgment on
+   candidates only, one intent per incident, nominal = zero intents and zero
+   model calls. A mock COCO server in the test suite drives three consecutive
+   See-to-Do runs so the merge does not depend on both services being up to test.
+2. **Wire to the real socket** the moment the See team names host and port
+   (config, not code).
+3. **Demo dry-run** with the COCO leg: observation fixture -> judge -> escalation
+   -> tap -> capability -> revert -> AUDIT.
+4. Everything previously listed (video stretch, transport seam) is DONE.
+
+Cut nothing silently: if the real COCO socket is not up by 08:00, the demo runs
+the recorded observation fixture through the same adapter and says so on screen.
+
+Decision needed from Arif and the See team before the freeze: their PRD requires
+a combined monorepo submission (tracked as a GitHub issue).
