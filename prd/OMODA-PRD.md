@@ -1132,3 +1132,60 @@ mechanism.
 - The rest already exists: L0 routing, consent stages, approval-scoped
   capability, two-person enforcement, UNDO, the agentic stream that lets the
   demo narrate every hop.
+
+## 26. The service layer: OpenShell governs a middle tier, not just the tool edge
+
+Agents do not call the outside world directly. Every external-facing call an agent
+makes goes through one service layer on the box (`100.71.143.26:3120`,
+`src/mock/city-services.js`, run as the `city-services` systemd unit). It fronts
+911 dispatch (fire / EMS / police), roadside and Seattle DOT, and the county
+incident registry: one gateway obfuscating several services, which is what a
+production agent sees, and the tier that would route each call to its real backend
+once the agent is given the ability to do so.
+
+The point this proves: **OpenShell can protect calls to external resources at a
+middle layer of the stack, not only at the tool edge.** The two-axis taxonomy is
+applied at the service seam. A read (`GET /api/dispatch/**`, fleet or call status;
+`GET /api/roads/segments/**`; `GET /api/incidents/**`) runs unattended. A
+reversible write (`POST /api/roads/workorders`) runs autonomously with an UNDO. A
+consequential write that puts something in the real world under our name is held:
+
+| route | backing tool | consent |
+|---|---|---|
+| `POST /api/dispatch` | dispatch.unit.request | approval |
+| `DELETE /api/dispatch/{call_id}` | dispatch.callout.cancel | two-person |
+| `POST /api/incidents` | incident.record.create | approval |
+| `DELETE /api/incidents/{id}` | incident.record.retract | two-person |
+| `POST /api/notify` | supervisor.notify | review |
+
+### 26.1 The boundary cannot drift
+
+`GET /api/catalog` returns every route with its backing tool and an
+`openshell_protected` flag read live from the skills manifest, so what the service
+layer calls dangerous is by construction exactly what the platform gates. Every
+catalogued route resolves to a declared capability; the mock derives each write's
+`dangerous` flag from the same manifest. There are no calls to fake external
+endpoints in any manifest. The only non-service-layer hosts an agent reaches are
+the two genuinely separate real platforms on the box: COCO perception (`:8091`)
+and the OpenClaw gateway (`:18789`).
+
+### 26.2 Agents know their reach
+
+Awareness is carried two ways, kept in sync. The planner catalog hands the model
+every declared tool with its verb, blast domain, owning agent, the concrete API it
+reaches, and whether it is OpenShell-gated (context, never authority: undeclared is
+still denied at the Broker). Each skill body names the concrete endpoints it acts
+on and the scenario that triggers it, so an agent's instructions match the live
+service layer. The full path from a CCTV observation to a governed call
+(trigger -> L1 -> L2 -> L3 -> endpoint -> protection) is documented in
+`docs/service-layer.md`; the read side for the dashboard is in
+`docs/dashboard-integration.md`.
+
+### 26.3 What this requires in code
+
+- The service layer (`src/mock/city-services.js`, `src/mock/serve-city.js`), the
+  `city-services` systemd unit on `:3120`, and a `:3120` health gate in the box
+  smoke (`scripts/box-verify.sh`), so a deploy is RED until the layer is live.
+- Every manifest's egress points at `:3120`; the `incident-response` responder is
+  wired through it alongside the emergency and roadside agents.
+- The planner renders the endpoint and gate per tool (`src/models/plan.js`).
