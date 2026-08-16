@@ -24,6 +24,7 @@ import { createTriggerStore } from "./transport/triggers.js";
 import { createTrainingRecorder } from "./training/recorder.js";
 import { createOrchestrator } from "./orchestrator.js";
 import { createUndoStore } from "./broker/undo.js";
+import { authorize } from "./broker/authorize.js";
 import { createCocoAdapter } from "./coco/adapter.js";
 import { createObservationJudge } from "./coco/judge.js";
 import { createCocoLive } from "./coco/live.js";
@@ -165,6 +166,50 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   });
   routeIntent = (intent) => orchestrator.onIntent(intent);
 
+  // The method a verb compiles to, so the request the Broker governs and the
+  // executor's call agree with what the policy delta materialises.
+  const METHOD_FOR_VERB = { read: "GET", create: "POST", update: "PUT", delete: "DELETE" };
+  const requestFor = (row) => row?.egress
+    ? { host: row.egress.host, port: row.egress.port ?? 443, method: METHOD_FOR_VERB[row.verb] ?? "POST", path: row.egress.path ?? "/" }
+    : undefined;
+
+  // The executor: once a decision materialises the write method, actually reach
+  // the service layer so the demo shows the real effect (a call_id, a work order).
+  async function executeAction(action) {
+    const req = action.request ?? requestFor(index.lookup(action.tool));
+    if (!req?.host) return { ok: true, note: "local action, no egress" };
+    const path = String(req.path).replace(/\/\*\*$/, "").replace(/\/\*$/, "") || "/";
+    const url = `http://${req.host}:${req.port ?? 3120}${path}`;
+    const withBody = req.method !== "GET" && req.method !== "DELETE";
+    try {
+      const res = await fetch(url, {
+        method: req.method,
+        headers: withBody ? { "content-type": "application/json" } : {},
+        body: withBody ? JSON.stringify({ demo: true, tool: action.tool, intentId: action.intentId }) : undefined,
+        signal: AbortSignal.timeout(6000),
+      });
+      const result = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, result };
+    } catch (err) {
+      return { ok: false, error: String(err.message).slice(0, 120) };
+    }
+  }
+  const executeInverse = async () => ({ ok: true, note: "demo inverse: no-op" });
+
+  // The tap-to-execute half: on a SETTLED approval, run the approved action
+  // through the Broker with the operator's decision, so the audit trail shows the
+  // full arc, capability materialises -> executed -> reverted, and the service
+  // layer is actually called. A denial or an unsettled two-person tap does not
+  // execute; the decision itself already reached the streams from the loop.
+  async function onApproved({ action, decision }) {
+    try {
+      return await authorize(action, { ledger, policy, decision, execute: executeAction, undo, executeInverse });
+    } catch (err) {
+      try { ledger.append({ kind: "decision", agent: "broker", tool: action.tool, verb: action.verb, impact: action.impact ?? [], outcome: "execute-failed", reason: String(err.message).slice(0, 160), intentId: action.intentId }); } catch { /* best effort */ }
+      return { ok: false };
+    }
+  }
+
   // Demo control: fire a chosen gated tool through the REAL escalation path so a
   // presenter can show the human gate (a Telegram Approve/Deny) on demand. It
   // uses the same intent store and escalation hook as a live incident, so the
@@ -189,6 +234,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
         actionId: `demo-${Date.now().toString(36)}`, intentId: intent.id,
         agent: row.agent, tool: row.tool, verb: row.verb, impact: row.impact ?? [],
         declared: true, reason: "admin demo: exercise the human gate",
+        request: requestFor(row),   // so the decision can materialise + execute it
       };
       intents.awaitConsent(intent.id, action);
       try { ledger.append({ kind: "demo", agent: "admin:demo", tool: row.tool, verb: row.verb, impact: row.impact ?? [], intentId: intent.id, outcome: "escalated", reason: `demo escalation -> ${row.consent}` }); } catch { /* best effort */ }
@@ -279,7 +325,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     const mediaTransform = createModalityTransform({
       transport, token: tgToken, inference: createInferenceClient({ timeoutMs: 180_000 }),
     });
-    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, bus, policy, operator, transport, mediaTransform, undo });
+    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, bus, policy, operator, transport, mediaTransform, undo, onApproved });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
     // Close the human gate: when L0 routes a dangerous action, send the operator
     // an Approve/Deny message on the first allowed chat. Inbound taps are already

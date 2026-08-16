@@ -165,3 +165,45 @@ test("an approve tap flows back to the audit and agent streams (not stuck on awa
   assert.equal(a.action, "dispatch.unit.request");
   assert.equal(a.intentId, intent.id);
 });
+
+test("a settled approval executes through the Broker: the audit trail completes", async () => {
+  const { createBus } = await import("../src/bus.js");
+  const { authorize } = await import("../src/broker/authorize.js");
+  const { skillLevelMap } = await import("../src/telemetry/display.js");
+  const { loadSkills } = await import("../src/skills/load.js");
+  const { isAuditWorthy, ledgerToAudit } = await import("../src/telemetry/audit.js");
+
+  const bus = createBus();
+  const audit = [];
+  bus.subscribe("audit", (e) => audit.push(e));
+  const levels = skillLevelMap(loadSkills().skills);
+  const transport = async () => ({ ok: true, result: {} });
+  const client = createTelegramClient({ transport, allowedIds: [OPERATOR_TG] });
+  const intents = createIntentStore();
+  const ledger = createLedger({
+    path: `/tmp/omoda-tgexec-${Date.now()}-${Math.random()}.jsonl`,
+    onAppend: (rec) => { if (isAuditWorthy(rec)) bus.publish("audit", ledgerToAudit(rec, levels)); },
+  });
+  const operator = { id: "operator:arif", scopes: ["intent:decide"] };
+  const see = { id: "see:cam3", scopes: ["intent:propose"] };
+  // no-op policy so the arc runs without the OpenShell gateway; a service executor spy
+  const executed = [];
+  const policy = { async check() { return { status: "deny" }; }, async applyDelta() {}, async revertDelta() {} };
+  const onApproved = ({ action, decision }) => authorize(action, {
+    ledger, policy, decision,
+    execute: async (a) => { executed.push(a.tool); return { ok: true, result: { call_id: "CAD-DEMO" } }; },
+  });
+  const loop = createTelegramLoop({ client, intents, ledger, bus, operator, onApproved });
+
+  const { intent } = intents.propose({ idempotencyKey: "k", caller: see, body: { requested_outcome: "respond" } });
+  intents.awaitConsent(intent.id, { actionId: "act-1", agent: "emergency-dispatch", tool: "dispatch.unit.request", verb: "create", impact: ["legal"], declared: true, request: { host: "100.71.143.26", port: 3120, method: "POST", path: "/api/dispatch" } });
+
+  await loop.handle(cb(`approve:${intent.id}:act-1`));
+  // let the fire-and-forget onApproved settle
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.deepEqual(executed, ["dispatch.unit.request"], "the approved action executed against the service layer");
+  const exec = audit.find((e) => e.outcome === "executed" && e.tool === "dispatch.unit.request");
+  assert.ok(exec, "the execution reached the audit trail");
+  assert.equal(exec.authority.kind, "operator", "executed under the operator's decision");
+});

@@ -130,6 +130,9 @@ export function compileRegistry(manifest) {
           : "local read only",
       consent: gated ? consentKind(c.verb, c.impact) : "none",
       inverseRequired: requiresInverse(c.verb),
+      // The concrete egress, so the Broker can build the request it governs and
+      // an executor can reach the service layer once a decision materialises it.
+      egress: c.egress ?? null,
     };
   });
 }
