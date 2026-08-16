@@ -80,9 +80,11 @@ run_smoke() {
   c=$(code "http://127.0.0.1:3140/health")
   [ "$c" = 200 ] && pass "Nemotron Embed healthy on :3140" || fail "Nemotron Embed :3140 -> $c"
 
-  #    The mock external service layer (city services the agents call).
-  c=$(code "http://127.0.0.1:3120/health")
-  [ "$c" = 200 ] && pass "city-services mock healthy on :3120" || fail "city-services :3120 -> $c"
+  #    The mock external service layer (city services the agents call). It binds
+  #    the configured host (tailnet, so the dashboard can poll it), like the stream.
+  CHOST="${OMODA_CITY_HOST:-$(grep -s '^OMODA_CITY_HOST=' /etc/systemd/system/city-services.service | cut -d= -f2-)}"; CHOST="${CHOST:-127.0.0.1}"
+  c=$(code "http://$CHOST:3120/health")
+  [ "$c" = 200 ] && pass "city-services mock healthy on :3120 ($CHOST)" || fail "city-services :3120 on $CHOST -> $c"
 
   # 6. all three layers, end to end, against the live gateway. This is the one
   #    that proves the architecture rather than the process being up.
