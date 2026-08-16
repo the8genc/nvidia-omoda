@@ -120,3 +120,38 @@ test("a dangerous path escalates to the operator; a safe read does not", async (
   assert.equal(r2.consent, "none");
   assert.equal(asked2.length, 0, "a safe read does not ask the operator");
 });
+
+test("the agent-action stream maps to the trigger: agent routed to, incident, action", async (t) => {
+  const { createBus } = await import("../src/bus.js");
+  const { createTriggerStore } = await import("../src/transport/triggers.js");
+  const { skillLevelMap } = await import("../src/telemetry/display.js");
+  const { loadSkills } = await import("../src/skills/load.js");
+  const { join } = await import("node:path");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+
+  const bus = createBus();
+  const agentEvents = [];
+  bus.subscribe("agent", (e) => agentEvents.push(e));
+  const triggers = createTriggerStore({ path: join(mkdtempSync(join(tmpdir(), "omoda-as-")), "t.json") });
+  const intents = createIntentStore();
+  const inference = { async complete() { return { text: "{}", model: MODEL.OMNI, endpoint: ENDPOINT.LOCAL }; } };
+  const judge = createObservationJudge({ intents, ledger: ledger(), inference, triggers });
+  const levels = skillLevelMap(loadSkills().skills);
+  const l0 = createOrchestrator({ intents, registry, ledger: ledger(), judge, bus, levelMap: levels });
+
+  await l0.reviewObservation(obs({ scene_description: "A multi-car collision blocks the intersection." }), []);
+
+  assert.equal(agentEvents.length, 1, "one trigger-driven routing event");
+  const e = agentEvents[0];
+  assert.deepEqual(Object.keys(e).sort(), ["action", "agentRoutedTo", "at", "incident", "intentId", "topic", "trigger"]);
+  assert.equal(e.agentRoutedTo, "accident-agent", "Agent Routed To");
+  assert.equal(e.incident, "traffic-accident", "Incident");
+  assert.equal(e.action, "coordinate the accident response (EMS, police)", "Action from the take-action triggers list");
+  assert.equal(e.trigger, "collision", "the phrase that fired");
+
+  // a quiet frame produces no agent-action event
+  agentEvents.length = 0;
+  await l0.reviewObservation(obs({ scene_description: "cars moving normally through the intersection" }), []);
+  assert.equal(agentEvents.length, 0, "no trigger, no agent-action event");
+});
