@@ -59,13 +59,23 @@ the L0 planner, the OpenClaw gateway client (L3), the `coco.describe` tool, and
 the judge's incident handoffs; the ledger hook means anything not yet narrated
 here still appears on `/v1/out/agents`.
 
-## Backpressure
+## Backpressure and latency
 
-Frames are ~55 KB each. A subscriber whose socket buffer exceeds 2 MB gets
-frames dropped rather than queued: a realtime view that lags a minute is worse
-than one that skips. Drops are per-subscriber and recover as soon as the buffer
-drains. If the demo app only needs the picture occasionally, subscribe to
-`/v1/out/frames` on demand and stay on the other two.
+The drop ceiling per subscriber IS the worst-case latency you watch at: a
+consumer slower than the stream keeps its buffer pinned at the ceiling, and
+ceiling divided by your throughput is your lag. So the ceilings are per topic:
+**frames ~160 KB (about two frames)**, observations/agentic 512 KB, agents 1 MB.
+A dashboard that cannot hold 30 fps sees a current picture with skipped motion,
+never a delayed one. Frames are also relayed with zero re-encode (COCO's bytes
+spliced into the envelope), so the hub adds no per-frame processing latency;
+measured on the box, hub and direct-from-COCO deliver the same seq at the same
+moment.
+
+If the dashboard wants full 30 fps motion rather than a current picture, the
+right architecture is: pull `/api/local/rgb-stream` DIRECT from COCO for pixels
+(same hardware, that path already worked) and use this hub for what only it has:
+observations with verdicts, the audit stream, and the agentic narration. The
+frames endpoint stays for convenience and recording.
 
 ## Inputs, for reference
 
