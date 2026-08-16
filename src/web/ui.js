@@ -7,6 +7,7 @@
 
 import { createElement as h, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { levelFor } from "../telemetry/display.js";
 
 const CSS = `
 :root{--bg:#0f1115;--panel:#171a21;--line:#252a34;--fg:#e6e9ef;--dim:#8b94a7;
@@ -45,6 +46,15 @@ button{background:#1f6feb;border:0;color:#fff;padding:6px 12px;border-radius:6px
 font-weight:600;cursor:pointer}
 button.deny{background:#3a1d1c;color:var(--bad)}
 .note{color:var(--dim);font-size:12px;margin:6px 0 0}
+.scroll{overflow-x:auto;border-radius:8px}
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:0 0 14px}
+.filters .f{display:flex;flex-direction:column;gap:4px}
+.filters label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
+.filters input{min-width:120px}
+details.raw>summary{cursor:pointer;color:var(--acc);font-size:11px;list-style:none}
+details.raw pre{background:#0c0e12;border:1px solid var(--line);border-radius:6px;padding:10px;
+overflow-x:auto;font-family:var(--mono);font-size:11px;color:var(--dim);margin:6px 0 0;white-space:pre-wrap;word-break:break-word}
+td.small{font-size:11px}
 `;
 
 const pill = (text, kind = "dim") => h("span", { className: `pill ${kind}` }, text);
@@ -64,6 +74,7 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui", className: active === "skills" ? "on" : "" }, "Skills"),
           h("a", { href: "/ui/intents", className: active === "intents" ? "on" : "" }, "Intents"),
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
+          h("a", { href: "/ui/audit", className: active === "audit" ? "on" : "" }, "Audit"),
           h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
           h("a", { href: "/ui/knowledge", className: active === "knowledge" ? "on" : "" }, "Knowledge"),
           h("a", { href: "/ui/triggers", className: active === "triggers" ? "on" : "" }, "Triggers"),
@@ -172,6 +183,87 @@ export function LedgerPage({ entries, chain }) {
       ),
     h("p", { className: "note" },
       "Written and fsynced before each action runs, so a crash between deciding and acting still leaves evidence."),
+  );
+}
+
+// The tier as the org chart sees it: an agent's rank (L0-L3), or a named role.
+function orgTier(agent, levelMap) {
+  const lvl = levelFor(agent, levelMap);
+  if (typeof lvl === "number") return pill(`L${lvl}`, lvl === 0 ? "warn" : "dim");
+  if (lvl) return pill(String(lvl), "dim");
+  return pill("-", "dim");
+}
+
+const short = (s, n = 12) => (s == null ? "-" : String(s).length > n ? String(s).slice(0, n) + "…" : String(s));
+
+/**
+ * The robust audit-DB view, admin only. The dashboard stream (/v1/out/audit) is
+ * the condensed eight-field projection; THIS is the full hash-chained record a
+ * human reviews: every field the ledger holds, filterable, with the raw JSON one
+ * click away and the chain-integrity state up top.
+ */
+export function AuditPage({ entries, chain, filters = {}, levelMap = null }) {
+  const f = (name, label, ph) =>
+    h("div", { className: "f" },
+      h("label", null, label),
+      h("input", { type: "text", name, defaultValue: filters[name] ?? "", placeholder: ph ?? "" }));
+  return h(Layout, { title: "audit", active: "audit" },
+    h("h2", null, "Audit trail  ",
+      chain.ok ? pill(`chain verifies, ${chain.length} entries`, "ok") : pill(`CHAIN BROKEN at ${chain.brokenAt}`, "bad")),
+    h("p", { className: "note" },
+      "The full audit database: every ledgered agent action, hash-chained and fsynced before it ran. ",
+      "The dashboard shows a condensed live stream (/v1/out/audit); this page is the deep record behind the admin login."),
+    h("form", { className: "filters", method: "get", action: "/ui/audit" },
+      f("intent", "Intent id", "int-..."),
+      f("agent", "Agent", "emergency-dispatch"),
+      f("tier", "Tier", "consequential"),
+      f("outcome", "Outcome", "executed"),
+      f("verb", "Verb", "create"),
+      f("since", "Since (ISO)", "2026-08-16"),
+      h("div", { className: "f" }, h("label", null, " "), h("button", { type: "submit" }, "Filter")),
+      h("div", { className: "f" }, h("label", null, " "), h("a", { href: "/ui/audit", className: "note" }, "clear")),
+    ),
+    entries.length === 0
+      ? h("div", { className: "empty" }, "No matching audit records.")
+      : h("div", { className: "scroll" }, h("table", null,
+        h("thead", null, h("tr", null,
+          ["#", "Time", "Agent", "Tier", "Tool", "Verb", "Impact", "Trigger", "Authority", "By", "Outcome", "Intent", "Target", "Args", "Hash", ""].map((c) => h("th", { key: c }, c)),
+        )),
+        h("tbody", null, entries.slice().reverse().map((e) => {
+          const authKind = String(e.authority ?? "-");
+          const authPill = authKind.startsWith("decision") ? pill("operator", "ok")
+            : authKind === "envelope" ? pill("envelope", "dim")
+              : authKind === "pending" ? pill("pending", "warn")
+                : (authKind === "denied" || authKind === "prohibited" || authKind === "incident") ? pill(authKind, "bad")
+                  : pill(short(authKind, 16), "dim");
+          return h("tr", { key: e.seq },
+            h("td", { className: "mono" }, e.seq),
+            h("td", { className: "mono small" }, e.at ? e.at.replace("T", " ").replace(/\.\d+Z$/, "Z") : "-"),
+            h("td", null, e.agent ?? "-"),
+            h("td", null, orgTier(e.agent, levelMap)),
+            h("td", { className: "mono small" }, e.tool ?? "-"),
+            h("td", null, e.verb ?? "-"),
+            h("td", { className: "small" }, (e.impact ?? []).join("+") || "-"),
+            h("td", { className: "small" }, e.triggerPhrase ?? "-"),
+            h("td", null, authPill),
+            h("td", { className: "small" }, e.decidedBy ?? "-"),
+            h("td", null,
+              e.outcome === "refused" ? pill("refused", "bad")
+                : e.outcome === "executed" ? pill("executed", "ok")
+                  : pill(short(e.outcome ?? "-", 16), "dim")),
+            h("td", { className: "mono small" }, short(e.intentId, 14)),
+            h("td", { className: "mono small" }, short(e.target, 26)),
+            h("td", { className: "mono small" }, short(e.argsHash, 10)),
+            h("td", { className: "mono small" }, short(e.hash, 10)),
+            h("td", null, h("details", { className: "raw" },
+              h("summary", null, "raw"),
+              h("pre", null, JSON.stringify(e, null, 2)))),
+          );
+        })),
+      )),
+    h("p", { className: "note" },
+      `Showing ${entries.length} record(s). Filters narrow the ledger query; the raw record under each row is the exact hash-chained entry. `,
+      "Reason / why: ", entries.length ? short(entries[entries.length - 1].reason, 80) : "-"),
   );
 }
 

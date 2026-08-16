@@ -8,11 +8,14 @@
 //   agentic      fine-grained narration: orchestration routing, agent-to-agent
 //                messages, tool and API calls with bounded results, inference
 //                requests and latency (src/telemetry/agentic.js)
+//   audit        the agentic audit trail: one eight-field record per triggered
+//                agent engagement, projected from the ledger plus the L1-L3
+//                handoffs (src/telemetry/audit.js). Excludes quiet frame review.
 //
 // Subscribers are synchronous and isolated: one slow or throwing subscriber
 // never stalls the publisher, because the publisher IS the live platform.
 
-export const TOPICS = Object.freeze(["frame", "observation", "agent", "agentic"]);
+export const TOPICS = Object.freeze(["frame", "observation", "agent", "agentic", "audit"]);
 
 export function createBus() {
   const subs = new Map(TOPICS.map((t) => [t, new Set()]));

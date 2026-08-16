@@ -274,7 +274,7 @@ export function createObservationJudge({
       detail: { handoff: "incident-intent", incidentType: j.incident_type, severity: j.severity, signals },
     });
     record({ tool: "judge.incident", verb: "create", outcome: "intent-opened", reason: `${j.incident_type} ${j.severity}`, intentId: intent.id });
-    return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals };
+    return { verdict: "incident", intentId: intent.id, incidentType: j.incident_type, severity: j.severity, signals, trigger: hit ? hit.matchedPhrase : null };
   }
 
   return {

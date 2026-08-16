@@ -1238,3 +1238,44 @@ language to `comms` (`src/transport/triggers.js`); the accident and fire respons
 plans (`src/domain/response-plan.js`) escalate to procurement (crane / hazmat) and
 evidence (footage export). New prohibited beats live in `src/domain/prohibited.js`:
 `no-grid-blackout`, `no-biometric-surveillance`, `no-surveillance-public-release`.
+
+## 27. The agentic audit trail: condensed stream, robust DB
+
+Everything the multi-tier agents do, and the information they flow to one another,
+is referenceable. The source of truth is the hash-chained action ledger
+(`src/ledger/ledger.js`), written and fsynced before each action runs. Two tiers
+sit over it.
+
+**The condensed stream** (`/v1/out/audit`, WebSocket, no auth) is the demo
+dashboard's view: one eight-field record per agent engagement, projected by
+`src/telemetry/audit.js`.
+
+| field | meaning |
+|---|---|
+| time | when it happened (ISO 8601) |
+| agent | the acting agent (raw name + a display phrase) |
+| tool | the tool used (null for a handoff) |
+| trigger | the trigger word, split into verb (CRUD), noun (resource), phrase (the take-action word) |
+| tier | the agent's rank L0-L3 (or operator / input) |
+| authority | who authorised it: a person, the envelope, or none |
+| outcome | what happened |
+| intent | why it acted: the incident id (groups the chain) and the reason |
+
+**What is deliberately absent from the trail.** A motor quietly reviewing frames
+that trigger nothing does not appear. The trail begins when L0 (OMODA) sees
+something that triggers it, and captures every downstream L1 -> L2 -> L3
+engagement. Quiet frames are never ledgered; perception, knowledge, and admin
+reads are filtered out (`isAuditWorthy`).
+
+**The robust DB** (`/ui/audit`, admin login) is the operational record for a
+human. It shows every field the ledger holds, more than the stream: `seq` / `hash`
+/ `prevHash` (the chain, verified on load), `argsHash` (evidence without storing
+the args), `target` (the concrete external call governed), `intentId` (incident
+linkage down to the L3 tool call), `decidedBy` / `authority`, the prohibited
+`rule` on a refusal, and the full raw JSON per row. It is filterable by intent,
+agent, tier, outcome, verb, and time. The same records are at `GET /v1/ledger`
+(bearer token) for programmatic review.
+
+The robustness lives in the DB, not the stream: the ledger records what is needed
+to operate and audit the system, and the dashboard pulls the condensed slice it
+needs. Full contract: `docs/audit-stream.md`.
