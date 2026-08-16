@@ -27,7 +27,8 @@ import { createObservationJudge } from "./coco/judge.js";
 import { createCocoLive } from "./coco/live.js";
 import { createBus } from "./bus.js";
 import { createAgenticTelemetry, setGlobalTelemetry } from "./telemetry/agentic.js";
-import { toAgentDisplay, skillLevelMap } from "./telemetry/display.js";
+import { skillLevelMap } from "./telemetry/display.js";
+import { narrateEntry } from "./telemetry/narrate.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -106,7 +107,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     // level, action, instruction (plus seq/tier for ordering and colour). The
     // full hash-chained record stays on disk and on /v1/ledger, one seq lookup
     // away.
-    onAppend: (rec) => bus.publish("agent", toAgentDisplay(rec, levelMap)),
+    onAppend: (rec) => bus.publish("agent", narrateEntry(rec, levelMap)),
   });
   // A deployment with a single operator identity cannot satisfy a two-person
   // rule; the store fails those closed rather than accept one tap. The operator
@@ -141,7 +142,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   // The judge is L0's detection engine, created once and shared.
   const judge = createObservationJudge({ intents, ledger });
   const orchestrator = createOrchestrator({
-    intents, registry: index, ledger, knowledge, judge,
+    intents, registry: index, ledger, knowledge, judge, bus, levelMap,
     localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
   });
   routeIntent = (intent) => orchestrator.onIntent(intent);
