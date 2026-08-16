@@ -18,6 +18,9 @@ export function createTelegramLoop({
   // The v4 modality transform (src/channels/modality.js). Optional: without it
   // a voice note gets an honest "not configured" reply rather than silence.
   mediaTransform = null,
+  // The undo registry (src/broker/undo.js). UNDO replays the registered inverse
+  // through it; without it, UNDO honestly reports it cannot reverse.
+  undo = null,
 }) {
   if (!client) throw new Error("telegram loop requires a client");
   if (!operator) throw new Error("telegram loop requires an operator identity");
@@ -146,9 +149,20 @@ export function createTelegramLoop({
     }
 
     if (cmd.kind === "undo") {
-      await client.send({ chatId: cmd.chatId, text: `Undo requested for \`${cmd.token}\`. Replaying the registered inverse.` });
-      record({ tool: "telegram.undo", outcome: "requested", reason: cmd.token });
-      return cmd;
+      if (!undo) {
+        await client.send({ chatId: cmd.chatId, text: `Cannot undo \`${cmd.token}\`: no reversal registry on this deployment.` });
+        record({ tool: "telegram.undo", outcome: "unconfigured", reason: cmd.token });
+        return { ...cmd, ok: false };
+      }
+      const out = await undo.run(cmd.token, { operator: operator.id });
+      await client.send({
+        chatId: cmd.chatId,
+        text: out.ok
+          ? `Reversed \`${cmd.token}\`. The inverse ran and is on the ledger.`
+          : `Could not undo \`${cmd.token}\`: ${out.reason}`,
+      });
+      record({ tool: "telegram.undo", outcome: out.ok ? "undone" : "refused", reason: out.ok ? cmd.token : out.reason });
+      return { ...cmd, ok: out.ok };
     }
 
     await client.send({ chatId: cmd.chatId, text: "Not a command I act on. Try APPROVE via the buttons, AUDIT, UNDO <token>, HALT or RESUME." });
