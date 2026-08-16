@@ -267,3 +267,57 @@ test("the training button is admin-gated and starts/stops the recorder", async (
   // csrf is enforced
   assert.equal((await req(app, { method: "POST", path: "/ui/training/start", form: { csrf: "bad" } })).status, 403);
 });
+
+test("the demo page fires a real gated escalation to Telegram (admin only)", async (t) => {
+  const { createApp } = await import("../src/api/server.js");
+  const { createTokenStore } = await import("../src/api/auth.js");
+  const { createIntentStore } = await import("../src/api/intents.js");
+  const { createLedger } = await import("../src/ledger/ledger.js");
+  const { buildCapabilityIndex, loadSkills } = await import("../src/skills/load.js");
+
+  const index = buildCapabilityIndex(loadSkills().skills);
+  const intents = createIntentStore();
+  const sends = [];
+  // stand-in for the escalation hook the live boot wires to telegramClient.escalate
+  const demo = {
+    configured: () => true,
+    gatedTools: () => index.all().filter((r) => r.consent && r.consent !== "none").map((r) => ({ tool: r.tool, verb: r.verb, impact: r.impact ?? [], consent: r.consent, agent: r.agent })),
+    async trigger(tool) {
+      const row = index.lookup(tool);
+      if (!row || !row.consent || row.consent === "none") return { ok: false, reason: "not gated" };
+      const { intent } = intents.propose({ idempotencyKey: `demo-${tool}-${Date.now()}`, caller: { id: "admin:demo", scopes: ["intent:propose"] }, body: { kind: "demo", requested_outcome: `DEMO ${tool}` } });
+      const action = { actionId: "demo-x", intentId: intent.id, agent: row.agent, tool, verb: row.verb, impact: row.impact ?? [] };
+      intents.awaitConsent(intent.id, action);
+      sends.push({ chatId: 111, intent, action });   // the "Telegram send"
+      return { ok: true, tool, consent: row.consent, intentId: intent.id };
+    },
+  };
+  const app = createApp({ tokens: createTokenStore(), ledger: createLedger({ path: `/tmp/omoda-demo-${Date.now()}.jsonl` }), intents, demo });
+
+  assert.equal((await req(app, { path: "/ui/demo", auth: null })).status, 401, "gated");
+  const page = await req(app, { path: "/ui/demo" });
+  assert.match(page.body, /Trigger a dangerous action/);
+  assert.match(page.body, /dispatch.unit.request/, "a gated tool is listed");
+
+  const csrf = page.body.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  const fired = await req(app, { method: "POST", path: "/ui/demo/trigger", form: { csrf, tool: "dispatch.unit.request" } });
+  assert.equal(fired.status, 200);
+  assert.match(fired.body, /Sent to the operator/);
+  assert.equal(sends.length, 1, "a Telegram approval was sent");
+  assert.equal(sends[0].action.tool, "dispatch.unit.request");
+  // the intent+action are in the store so the operator's tap can decide
+  assert.equal(intents.get(sends[0].intent.id).actions[0].tool, "dispatch.unit.request");
+
+  assert.equal((await req(app, { method: "POST", path: "/ui/demo/trigger", form: { csrf: "bad", tool: "dispatch.unit.request" } })).status, 403);
+});
+
+test("a demo intent is not routed by the planner (no double-escalation)", async () => {
+  const { createOrchestrator } = await import("../src/orchestrator.js");
+  const { buildCapabilityIndex, loadSkills } = await import("../src/skills/load.js");
+  const { createLedger } = await import("../src/ledger/ledger.js");
+  const index = buildCapabilityIndex(loadSkills().skills);
+  const l0 = createOrchestrator({ intents: { awaitConsent() {} }, registry: index, ledger: createLedger({ path: `/tmp/omoda-demoq-${Date.now()}.jsonl` }), client: { async complete() { throw new Error("planner should not be called for a demo intent"); } } });
+  const r = await l0.onIntent({ id: "int-demo", kind: "demo", requestedOutcome: "DEMO" });
+  assert.equal(r.routed, false);
+  assert.match(r.reason, /demo intent/);
+});

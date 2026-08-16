@@ -69,6 +69,10 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
    */
   async function onIntent(intent) {
     if (!intent || intent.actions?.length) return { routed: false, reason: "already routed" };
+    // A demo intent from the admin dashboard escalates a chosen gated tool
+    // directly (to show the human gate live); the planner must not also pick a
+    // tool for it, which would double-escalate.
+    if (intent.kind === "demo") return { routed: false, reason: "demo intent, escalated directly by the admin dashboard" };
 
     // Retrieval context (PRD 23.2): pertinent knowledge tightens the choice.
     let context = "";
