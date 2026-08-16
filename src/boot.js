@@ -87,15 +87,6 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const operatorCount = (process.env.TELEGRAM_ALLOWED_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
   const intents = createIntentStore({ singleOperator: operatorCount <= 1 });
 
-  const app = createApp({
-    tokens, ledger, intents,
-    nonces: createNonceCache(),
-    limiter: createRateLimiter({ capacity: 120, refillPerSec: 2 }),
-    skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, registry: s.registry })),
-    uiOperator: operator,
-    knowledge,
-  });
-
   // The proxy layer's retrieval store (PRD 23.2). NeMo Retriever embeddings
   // when the on-box embed server answers; lexical otherwise, labeled as such.
   const embedEndpoint = process.env.OMODA_EMBED_ENDPOINT ?? "http://127.0.0.1:3140/v1/embeddings";
@@ -108,6 +99,15 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     dir: process.env.OMODA_KNOWLEDGE ?? "var/knowledge", embedder, ledger,
   });
   knowledge.backend = embedder ? embedder.name : "lexical (embed server down)";
+
+  const app = createApp({
+    tokens, ledger, intents,
+    nonces: createNonceCache(),
+    limiter: createRateLimiter({ capacity: 120, refillPerSec: 2 }),
+    skills: skills.map((s) => ({ skill: s.skill, agent: s.agent, registry: s.registry })),
+    uiOperator: operator,
+    knowledge,
+  });
 
   const ingest = createStreamIngest({ tokens, intents, ledger });
   await new Promise((r) => app.server.listen(port, host, r));
