@@ -120,8 +120,26 @@ export function prohibitedReason(action = {}) {
   // 7b: actions with no acceptable blast radius at all. A city-wide emergency
   // broadcast is not a thing an agent may do even with two human approvals; the
   // point of the prohibited list is that some capabilities have no decision path.
-  if (tool === "dispatch.mass_broadcast" || tool === "dispatch.city_alert") {
+  if (tool === "dispatch.mass_broadcast" || tool === "dispatch.city_alert"
+    || tool === "comms.mass_broadcast" || tool === "comms.city_alert") {
     return "no-mass-broadcast";
+  }
+
+  // 7c: cutting power to the whole city. De-energizing one block is a governed
+  // update (utility-control, approval); a grid-wide blackout has no operator tap
+  // that could make it acceptable.
+  if (tool === "utility.grid.blackout" || tool === "utility.city_blackout") {
+    return "no-grid-blackout";
+  }
+
+  // 7d: the surveillance red line. A CCTV platform that watches a city must be
+  // structurally incapable of turning that into biometric tracking, or of
+  // dumping footage into the public. No decision path exists for either.
+  if (tool === "camera.facial_recognition" || tool === "camera.biometric_match") {
+    return "no-biometric-surveillance";
+  }
+  if (tool === "evidence.public_release" || tool === "camera.public_stream") {
+    return "no-surveillance-public-release";
   }
 
   // 8: destructive git on refs we do not own.

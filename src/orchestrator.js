@@ -25,6 +25,8 @@ export const L1_BY_INCIDENT = Object.freeze({
   fire: "fire-agent",
   "fallen-signage": "roadside",
   "road-maintenance": "roadside",
+  "utility-hazard": "utility-agent",
+  "public-warning": "comms-agent",
   other: "roadside",
 });
 

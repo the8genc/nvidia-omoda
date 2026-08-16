@@ -127,6 +127,30 @@ dispatch is pending human approval, the agent stream shows it held; the dashboar
 can show the same call go from "awaiting approval" to a live `call_id` the moment
 the operator approves. That transition is the product.
 
+## More surfaces (same base, same no-auth, same catalog)
+
+The platform now fronts five service domains. All reads below are open and
+pollable; the writes are agent-driven and OpenShell-gated (badge them from
+`/api/catalog` like the rest).
+
+- **Procurement / finance:** `GET /api/procurement/vendors` (private vendors on
+  contract, hourly rate, availability); `GET /api/procurement/callouts/{id}`
+  (a callout's status and `running_cost`, walks `authorized -> dispatched -> on_site`).
+- **Utility / infrastructure:** `GET /api/utility/segments/{id}`
+  (`energized`, `gas_flowing`, `load`, `hazard`); state flips when an agent
+  de-energizes or restores.
+- **Surveillance / evidence:** `GET /api/evidence/clips/{id}` (a clip's custody
+  status, `held` or `retracted`). Camera steering (`PUT /api/cameras/ptz`) is
+  agent-driven.
+- **Public-safety comms:** `GET /api/comms/channels` (advisory board and
+  reverse-911 zones with audience size).
+
+These make good dashboard panels: a live "public spend so far" counter from the
+procurement callouts, a grid map from the utility segments, and an evidence-locker
+list. The catalog badges each write by `openshell_protected`, so the demo can show
+a crane callout (financial), a block de-energize (infrastructure), and an evidence
+export (privacy) each waiting on a human, alongside the emergency dispatch.
+
 ## Quick poll loop (reference)
 
 ```js

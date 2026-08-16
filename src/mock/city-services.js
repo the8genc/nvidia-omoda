@@ -62,8 +62,24 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
   const workorders = new Map(); // wo_id   -> { type, segment, crew_eta, placed_at }
   const incidents = new Map();  // inc_id  -> { kind, location, summary, placed_at, retracted }
   const notices = new Map();    // ntf_id  -> { to, subject, placed_at }
+  const callouts = new Map();   // po_id   -> { vendor, need, location, placed_at, cancelled }
+  const clips = new Map();      // ev_id   -> { camera_id, span, reason, placed_at, retracted }
+  const advisories = new Map(); // adv/r911 id -> { kind, area, message, placed_at }
+  const segments = new Map();   // seg_id  -> { energized, gas_flowing, hazard }
   let counter = 0;
   const nextId = (prefix) => `${prefix}-${(++counter).toString().padStart(4, "0")}`;
+
+  // Private vendors on contract, and the public notification channels: static
+  // reference the reads return.
+  const VENDORS = Object.freeze([
+    { vendor_id: "V-CRANE-1", name: "Ballard Heavy Lift", kind: "crane", rate_per_hour: 1200, status: "available" },
+    { vendor_id: "V-TOW-HD1", name: "Rainier Heavy Recovery", kind: "heavy-tow", rate_per_hour: 480, status: "available" },
+    { vendor_id: "V-HAZ-1", name: "Cascade Hazmat Services", kind: "hazmat", rate_per_hour: 2100, status: "available" },
+  ]);
+  const CHANNELS = Object.freeze([
+    { channel_id: "ADV-BOARD", name: "Neighborhood advisory board", kind: "advisory", audience: 4200 },
+    { channel_id: "R911-Z1", name: "Reverse-911 zone 1", kind: "reverse911", audience: 1850 },
+  ]);
 
   // The write calls that put something in the real world are dangerous. The
   // source of truth is the manifest: a tool is dangerous iff its consent is not
@@ -72,6 +88,10 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
   const DANGEROUS_FALLBACK = new Set([
     "dispatch.unit.request", "dispatch.callout.cancel",
     "incident.record.create", "incident.record.retract", "supervisor.notify",
+    "procurement.callout.authorize", "procurement.callout.cancel",
+    "utility.gas.shutoff", "utility.power.deenergize",
+    "evidence.clip.export", "evidence.clip.retract",
+    "comms.advisory.post", "comms.reverse911.send",
   ]);
   function isDangerous(tool) {
     if (!registry) return DANGEROUS_FALLBACK.has(tool);
@@ -93,6 +113,25 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
     { method: "GET", path: "/api/incidents/{id}", tool: "incident.status.read", summary: "poll a filed incident record" },
     { method: "DELETE", path: "/api/incidents/{id}", tool: "incident.record.retract", summary: "retract a filed incident record" },
     { method: "POST", path: "/api/notify", tool: "supervisor.notify", summary: "notify a supervisor / on-call under our name" },
+    // procurement / finance (the financial impact domain)
+    { method: "GET", path: "/api/procurement/vendors", tool: "procurement.vendor.read", summary: "list private vendors on contract (crane, heavy tow, hazmat)" },
+    { method: "POST", path: "/api/procurement/callouts", tool: "procurement.callout.authorize", summary: "authorize a private vendor callout (commits public money)" },
+    { method: "GET", path: "/api/procurement/callouts/{id}", tool: "procurement.callout.status", summary: "poll a vendor callout: status and running cost" },
+    { method: "DELETE", path: "/api/procurement/callouts/{id}", tool: "procurement.callout.cancel", summary: "cancel a paid vendor contract" },
+    // utility / infrastructure (the update verb)
+    { method: "GET", path: "/api/utility/segments/{id}", tool: "utility.grid.read", summary: "read a grid segment: energized, gas, load, hazard" },
+    { method: "PUT", path: "/api/utility/power/restore", tool: "utility.power.restore", summary: "restore power to a segment after a hazard is cleared" },
+    { method: "PUT", path: "/api/utility/gas/shutoff", tool: "utility.gas.shutoff", summary: "shut off gas to a segment" },
+    { method: "PUT", path: "/api/utility/power/deenergize", tool: "utility.power.deenergize", summary: "cut power to a block" },
+    // surveillance / evidence (the privacy line)
+    { method: "PUT", path: "/api/cameras/ptz", tool: "camera.ptz.control", summary: "pan/tilt/zoom a camera to follow an incident" },
+    { method: "POST", path: "/api/evidence/clips", tool: "evidence.clip.export", summary: "export CCTV footage as legal evidence" },
+    { method: "GET", path: "/api/evidence/clips/{id}", tool: "evidence.clip.status", summary: "poll an exported evidence clip" },
+    { method: "DELETE", path: "/api/evidence/clips/{id}", tool: "evidence.clip.retract", summary: "retract an exported evidence clip" },
+    // public-safety comms (the review -> approval ladder)
+    { method: "GET", path: "/api/comms/channels", tool: "comms.channel.read", summary: "list notification channels and audience size" },
+    { method: "POST", path: "/api/comms/advisories", tool: "comms.advisory.post", summary: "post a neighborhood advisory" },
+    { method: "POST", path: "/api/comms/reverse911", tool: "comms.reverse911.send", summary: "send a reverse-911 to residents (evacuate / shelter)" },
   ];
 
   function protectionFor(tool) {
@@ -148,6 +187,22 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
       incident_id: id, kind: rec.kind, location: rec.location, summary: rec.summary,
       status, routed_to: "King County incident registry", filed_at: new Date(rec.placed_at).toISOString(),
     };
+  }
+
+  function calloutView(id, rec) {
+    const elapsed = Math.max(0, Math.floor((now() - rec.placed_at) / 1000));
+    const status = rec.cancelled ? "cancelled" : elapsed < 30 ? "authorized" : elapsed < 600 ? "dispatched" : "on_site";
+    const hours = Math.max(1, Math.ceil(elapsed / 3600));
+    return {
+      callout_id: id, vendor: rec.vendor.name, kind: rec.vendor.kind, need: rec.need, location: rec.location,
+      status, rate_per_hour: rec.vendor.rate_per_hour, running_cost: rec.cancelled ? rec.vendor.rate_per_hour : rec.vendor.rate_per_hour * hours,
+      authorized_at: new Date(rec.placed_at).toISOString(),
+    };
+  }
+
+  function segmentState(id) {
+    const s = segments.get(id) ?? { energized: true, gas_flowing: true, hazard: "downed line reported" };
+    return { segment_id: id, ...s, updated_at: new Date(now()).toISOString() };
   }
 
   async function readBody(req) {
@@ -253,8 +308,102 @@ export function createCityServices({ now = () => Date.now(), registry = null } =
       return json(res, 201, { notice_id: id, to: rec.to, subject: rec.subject, status: "delivered", dangerous: isDangerous("supervisor.notify"), sent_at: new Date(rec.placed_at).toISOString(), message: `notification ${id} sent to ${rec.to}` });
     }
 
+    // ── procurement / private vendors (the financial impact domain) ──────
+    // Authorizing a private callout commits public money, so the POST is held
+    // for approval; cancelling a paid contract has a fee and a legal cost, so
+    // the DELETE takes two people. Reads run free.
+    if (p === "/api/procurement/vendors" && m === "GET") {
+      return json(res, 200, { vendors: VENDORS.map((v) => ({ ...v })) });
+    }
+    if (p === "/api/procurement/callouts" && m === "POST") {
+      const body = await readBody(req);
+      const vendor = VENDORS.find((v) => v.vendor_id === body.vendor_id) ?? VENDORS[0];
+      const id = nextId("PO");
+      const rec = { vendor, need: body.need ?? "heavy recovery", location: body.location ?? "unknown", placed_at: now() };
+      callouts.set(id, rec);
+      return json(res, 201, { ...calloutView(id, rec), dangerous: isDangerous("procurement.callout.authorize"), message: `${vendor.name} (${vendor.kind}) authorized at $${vendor.rate_per_hour}/hr` });
+    }
+    const poMatch = p.match(/^\/api\/procurement\/callouts\/([A-Za-z0-9-]+)$/);
+    if (poMatch) {
+      const id = poMatch[1];
+      const rec = callouts.get(id);
+      if (!rec) return json(res, 404, { error: "unknown callout_id" });
+      if (m === "GET") return json(res, 200, calloutView(id, rec));
+      if (m === "DELETE") {
+        rec.cancelled = true;
+        return json(res, 200, { ...calloutView(id, rec), cancellation_fee: rec.vendor.rate_per_hour, dangerous: isDangerous("procurement.callout.cancel"), message: "vendor contract cancelled" });
+      }
+    }
+
+    // ── utility / infrastructure (the update verb) ───────────────────────
+    // Cutting power to a block and shutting off gas are updates to a real grid
+    // state, held for approval. Restoring power after a hazard clears is a
+    // reversible, contained update that runs autonomously.
+    const segMatch2 = p.match(/^\/api\/utility\/segments\/([A-Za-z0-9-]+)$/);
+    if (segMatch2 && m === "GET") return json(res, 200, segmentState(segMatch2[1]));
+    if (p === "/api/utility/power/deenergize" && m === "PUT") {
+      const body = await readBody(req);
+      const seg = body.segment ?? "unknown";
+      segments.set(seg, { ...(segments.get(seg) ?? { gas_flowing: true, hazard: "downed line reported" }), energized: false });
+      return json(res, 200, { ...segmentState(seg), dangerous: isDangerous("utility.power.deenergize"), message: `power cut to ${seg}` });
+    }
+    if (p === "/api/utility/gas/shutoff" && m === "PUT") {
+      const body = await readBody(req);
+      const seg = body.segment ?? "unknown";
+      segments.set(seg, { ...(segments.get(seg) ?? { energized: true, hazard: "gas leak reported" }), gas_flowing: false });
+      return json(res, 200, { ...segmentState(seg), dangerous: isDangerous("utility.gas.shutoff"), message: `gas shut off to ${seg}` });
+    }
+    if (p === "/api/utility/power/restore" && m === "PUT") {
+      const body = await readBody(req);
+      const seg = body.segment ?? "unknown";
+      segments.set(seg, { ...(segments.get(seg) ?? { gas_flowing: true, hazard: null }), energized: true, hazard: null });
+      return json(res, 200, { ...segmentState(seg), dangerous: isDangerous("utility.power.restore"), message: `power restored to ${seg}` });
+    }
+
+    // ── surveillance / evidence (the privacy line) ───────────────────────
+    // Steering a camera is a reversible, contained update. Exporting footage as
+    // evidence starts a chain of custody (approval); retracting it is spoliation
+    // risk (two-person). Facial recognition and public release are prohibited and
+    // never reach here.
+    if (p === "/api/cameras/ptz" && m === "PUT") {
+      const body = await readBody(req);
+      return json(res, 200, { camera_id: body.camera_id ?? "CAM-1", view: { pan: body.pan ?? 0, tilt: body.tilt ?? 0, zoom: body.zoom ?? 1 }, dangerous: isDangerous("camera.ptz.control"), message: "camera repositioned" });
+    }
+    if (p === "/api/evidence/clips" && m === "POST") {
+      const body = await readBody(req);
+      const id = nextId("EV");
+      const rec = { camera_id: body.camera_id ?? "CAM-1", span: body.span ?? "00:00-00:30", reason: body.reason ?? "incident evidence", placed_at: now() };
+      clips.set(id, rec);
+      return json(res, 201, { clip_id: id, camera_id: rec.camera_id, span: rec.span, chain_of_custody: `custody opened for ${id}`, status: "exported", dangerous: isDangerous("evidence.clip.export"), exported_at: new Date(rec.placed_at).toISOString(), message: `clip ${id} exported as evidence` });
+    }
+    const evMatch = p.match(/^\/api\/evidence\/clips\/([A-Za-z0-9-]+)$/);
+    if (evMatch) {
+      const id = evMatch[1];
+      const rec = clips.get(id);
+      if (!rec) return json(res, 404, { error: "unknown clip_id" });
+      if (m === "GET") return json(res, 200, { clip_id: id, camera_id: rec.camera_id, span: rec.span, status: rec.retracted ? "retracted" : "held", exported_at: new Date(rec.placed_at).toISOString() });
+      if (m === "DELETE") { rec.retracted = true; return json(res, 200, { clip_id: id, status: "retracted", dangerous: isDangerous("evidence.clip.retract"), message: "evidence clip retracted" }); }
+    }
+
+    // ── public-safety comms (the review -> approval ladder) ──────────────
+    if (p === "/api/comms/channels" && m === "GET") {
+      return json(res, 200, { channels: CHANNELS.map((c) => ({ ...c })) });
+    }
+    if (p === "/api/comms/advisories" && m === "POST") {
+      const body = await readBody(req);
+      const id = nextId("ADV");
+      advisories.set(id, { kind: "advisory", area: body.area ?? "unknown", message: body.message ?? "", placed_at: now() });
+      return json(res, 201, { advisory_id: id, area: body.area ?? "unknown", reach: CHANNELS[0].audience, status: "posted", dangerous: isDangerous("comms.advisory.post"), message: `advisory ${id} posted` });
+    }
+    if (p === "/api/comms/reverse911" && m === "POST") {
+      const body = await readBody(req);
+      const id = nextId("R911");
+      advisories.set(id, { kind: "reverse911", area: body.zone ?? "zone 1", message: body.message ?? "", placed_at: now() });
+      return json(res, 201, { alert_id: id, zone: body.zone ?? "zone 1", action: body.action ?? "shelter-in-place", recipients: CHANNELS[1].audience, status: "sent", dangerous: isDangerous("comms.reverse911.send"), message: `reverse-911 ${id} sent to ${CHANNELS[1].audience} residents` });
+    }
+
     return json(res, 404, { error: "no such route", hint: "GET /api/catalog lists every route" });
   }
 
-  return { handle, server: createServer(handle), _state: { calls, workorders, incidents, notices } };
+  return { handle, server: createServer(handle), _state: { calls, workorders, incidents, notices, callouts, clips, advisories, segments } };
 }
