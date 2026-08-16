@@ -75,6 +75,10 @@ run_smoke() {
   c=$(code "http://127.0.0.1:8000/health")
   [ "$c" = 200 ] && pass "local Nemotron healthy on :8000" || fail "local Nemotron :8000 -> $c"
 
+  #    The second NVIDIA model: NeMo Retriever embeddings for the proxy layer.
+  c=$(code "http://127.0.0.1:3140/health")
+  [ "$c" = 200 ] && pass "Nemotron Embed healthy on :3140" || fail "Nemotron Embed :3140 -> $c"
+
   # 6. all three layers, end to end, against the live gateway. This is the one
   #    that proves the architecture rather than the process being up.
   if [ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ] && ! grep -q '^OPENCLAW_GATEWAY_TOKEN=' .env 2>/dev/null; then

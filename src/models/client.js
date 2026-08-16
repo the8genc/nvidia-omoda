@@ -41,7 +41,7 @@ export function createInferenceClient({ fetchImpl = globalThis.fetch, timeoutMs 
    * One completion. Returns the text plus the metadata the ledger needs to make
    * G7 measurable: which model served it, on which endpoint, and how long it took.
    */
-  async function complete({ model, endpoint, messages, maxTokens = 512, temperature = 0, signal = null }) {
+  async function complete({ model, endpoint, messages, maxTokens = 512, temperature = 0, signal = null, jsonSchema = null }) {
     if (!model || !endpoint) {
       throw new RoutingRefused("refusing to infer without a routed model and endpoint");
     }
@@ -55,7 +55,14 @@ export function createInferenceClient({ fetchImpl = globalThis.fetch, timeoutMs 
           "content-type": "application/json",
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify({ model, messages, max_tokens: maxTokens, temperature }),
+        body: JSON.stringify({
+          model, messages, max_tokens: maxTokens, temperature,
+          // vLLM structured outputs: constrained decoding against a JSON schema,
+          // the serving stack's own guarantee of parseable output. Verified on
+          // the box; native tool_calls with the nemotron_v3 reasoning parser
+          // came back empty, so this is the reliable documented path.
+          ...(jsonSchema ? { response_format: { type: "json_schema", json_schema: { name: jsonSchema.name ?? "output", schema: jsonSchema.schema ?? jsonSchema } } } : {}),
+        }),
         signal: signal ?? ac.signal,
       });
       if (!res.ok) {

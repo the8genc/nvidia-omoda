@@ -14,7 +14,7 @@ import {
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
-import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage } from "../web/ui.js";
+import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage, KnowledgePage } from "../web/ui.js";
 import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
 import { safeParseManifest } from "../schema/manifest.js";
 import { compile } from "../policy/compile.js";
@@ -72,6 +72,7 @@ async function readBody(req, limit = 256 * 1024) {
 export function createApp({
   tokens, ledger, intents, nonces, limiter, skills = [], uiOperator = null,
   skillsDir = "skills",
+  knowledge = null,
   // How "apply now" takes effect. The default exits non-zero after the response
   // has flushed, so systemd (Restart=on-failure) brings the service back with
   // the new skill loaded. Injected so tests never kill their own process.
@@ -117,6 +118,26 @@ export function createApp({
     }
     if (path === "/ui/agents/new" && method === "GET") {
       return html(200, render(AgentNewPage({ csrf })));
+    }
+    if (path === "/ui/knowledge" && method === "GET") {
+      if (!knowledge) return html(503, "<p>knowledge store not configured</p>");
+      return html(200, render(KnowledgePage({ csrf, docs: knowledge.list(), backend: knowledge.backend ?? "lexical" })));
+    }
+    if (path === "/ui/knowledge" && method === "POST") {
+      if (!knowledge) return html(503, "<p>knowledge store not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const name = (form.get("name") ?? "").trim();
+      const text = (form.get("text") ?? "").trim();
+      if (!name || !text) {
+        return html(422, render(KnowledgePage({ csrf, docs: knowledge.list(), backend: knowledge.backend ?? "lexical", error: "name and content are both required" })));
+      }
+      try {
+        const added = await knowledge.addDocument({ name, text, by: "admin" });
+        return html(200, render(KnowledgePage({ csrf, docs: knowledge.list(), backend: knowledge.backend ?? "lexical", added: { name, ...added } })));
+      } catch (err) {
+        return html(502, render(KnowledgePage({ csrf, docs: knowledge.list(), backend: knowledge.backend ?? "lexical", error: `store failed: ${String(err.message).slice(0, 200)}` })));
+      }
     }
     if (path === "/ui/agents/new" && method === "POST") {
       const form = new URLSearchParams(await readBody(req));

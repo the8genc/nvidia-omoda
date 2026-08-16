@@ -65,6 +65,7 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui/intents", className: active === "intents" ? "on" : "" }, "Intents"),
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
           h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
+          h("a", { href: "/ui/knowledge", className: active === "knowledge" ? "on" : "" }, "Knowledge"),
         ),
       ),
       h("main", null, children),
@@ -224,6 +225,39 @@ export function AgentNewPage({ csrf, error = null, prefill = {} }) {
     ),
     h("p", { className: "note" },
       "Every deploy is ledgered. Levels are enforced at compile time: an L2 cannot hold inference, an L3 cannot do local work."),
+  );
+}
+
+export function KnowledgePage({ csrf, docs = [], backend = "lexical", error = null, added = null }) {
+  return h(Layout, { title: "knowledge", active: "knowledge" },
+    h("h2", null, "Knowledge (the proxy layer's retrieval store)  ",
+      backend.startsWith("nemotron") ? pill("NeMo Retriever embeddings, on-box", "ok") : pill(backend, "warn")),
+    h("p", { className: "note" },
+      "Documents uploaded here are retrieved as context for L1 domain inference. ",
+      "Embedded by nvidia/llama-nemotron-embed-1b-v2 on the box when it is up; term scoring otherwise, and the badge says which."),
+    error ? h("div", { className: "err" }, error) : null,
+    added ? h("div", { className: "okbox" }, `Stored "${added.name}": ${added.chunks} chunk(s) via ${added.backend}${added.duplicate ? " (already known)" : ""}.`) : null,
+    h("form", { className: "stack", method: "POST", action: "/ui/knowledge" },
+      h("input", { type: "hidden", name: "csrf", value: csrf }),
+      h("label", null, "Document name"),
+      h("input", { type: "text", name: "name", required: true, placeholder: "incident-runbook-v2" }),
+      h("label", null, "Content (paste the text; it is chunked, embedded and ledgered)"),
+      h("textarea", { name: "text", rows: 10, required: true, placeholder: "Paste the document text here." }),
+      h("button", { type: "submit" }, "Add to knowledge"),
+    ),
+    docs.length === 0
+      ? h("div", { className: "empty", style: { marginTop: 18 } }, "No documents yet.")
+      : h("table", { style: { marginTop: 18 } },
+        h("thead", null, h("tr", null, ["Name", "Chunks", "Backend", "Added"].map((c) => h("th", { key: c }, c)))),
+        h("tbody", null, docs.map((d) =>
+          h("tr", { key: d.id },
+            h("td", null, d.name),
+            h("td", { className: "mono" }, d.chunks),
+            h("td", null, d.backend?.startsWith("nemotron") ? pill("nemotron-embed", "ok") : pill(d.backend ?? "lexical", "dim")),
+            h("td", { className: "mono" }, (d.addedAt ?? "").slice(0, 19)),
+          ),
+        )),
+      ),
   );
 }
 
