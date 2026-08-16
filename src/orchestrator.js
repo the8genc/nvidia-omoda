@@ -53,7 +53,7 @@ export function l1FromSignals(signals) {
  * @param {() => boolean} [opts.localAvailable]
  * @param {object} [opts.knowledge] retrieval store for L1 context injection
  */
-export function createOrchestrator({ intents, registry, ledger, client, localAvailable = () => true, knowledge = null, judge = null, bus = null, levelMap = null, onEscalate = null } = {}) {
+export function createOrchestrator({ intents, registry, ledger, client, localAvailable = () => true, hostedAvailable = () => true, knowledge = null, judge = null, bus = null, levelMap = null, onEscalate = null } = {}) {
   if (!intents || !registry) throw new Error("orchestrator requires intents and the registry");
 
   const record = (entry) => {
@@ -84,7 +84,7 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
 
     let plan;
     try {
-      plan = await planAction({ intent, registry, client, localAvailable: localAvailable(), context });
+      plan = await planAction({ intent, registry, client, localAvailable: localAvailable(), hostedAvailable: hostedAvailable(), context });
     } catch (err) {
       if (err instanceof PlanRefused) {
         // The model named something undeclared. That is a refusal, loudly.
