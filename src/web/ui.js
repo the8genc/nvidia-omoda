@@ -34,6 +34,13 @@ code,.mono{font-family:var(--mono);font-size:12px}
 form.inline{display:flex;gap:8px;align-items:center;margin:0}
 input[type=text]{background:#0c0e12;border:1px solid var(--line);color:var(--fg);
 padding:6px 9px;border-radius:6px;font-size:12px;min-width:250px;font-family:inherit}
+textarea,select{background:#0c0e12;border:1px solid var(--line);color:var(--fg);
+padding:8px 10px;border-radius:6px;font-size:12px;font-family:var(--mono);width:100%}
+form.stack{display:flex;flex-direction:column;gap:12px;max-width:760px;background:var(--panel);
+border:1px solid var(--line);border-radius:8px;padding:18px}
+form.stack label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);font-weight:600}
+.err{color:var(--bad);background:#25100f;border:1px solid #4a1f1d;border-radius:8px;padding:10px 14px;font-size:12px}
+.okbox{color:var(--ok);background:#0d1f13;border:1px solid #1c3f26;border-radius:8px;padding:10px 14px;font-size:12px}
 button{background:#1f6feb;border:0;color:#fff;padding:6px 12px;border-radius:6px;font-size:12px;
 font-weight:600;cursor:pointer}
 button.deny{background:#3a1d1c;color:var(--bad)}
@@ -57,6 +64,7 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui", className: active === "skills" ? "on" : "" }, "Skills"),
           h("a", { href: "/ui/intents", className: active === "intents" ? "on" : "" }, "Intents"),
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
+          h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
         ),
       ),
       h("main", null, children),
@@ -69,8 +77,10 @@ const consentPill = (consent) =>
     : consent === "two-person" ? pill("two-person", "bad")
       : pill(consent, "warn");
 
-export function SkillsPage({ skills }) {
+export function SkillsPage({ skills, deployed = null }) {
   return h(Layout, { title: "skills", active: "skills" },
+    deployed ? h("div", { className: "okbox" },
+      `Agent "${deployed}" deployed. If you chose apply-now the service is restarting and this page reflects it in a few seconds; otherwise it applies on the next restart.`) : null,
     h("h2", null, "Enabled skills"),
     skills.length === 0
       ? h("div", { className: "empty" }, "No skills enabled.")
@@ -160,6 +170,60 @@ export function LedgerPage({ entries, chain }) {
       ),
     h("p", { className: "note" },
       "Written and fsynced before each action runs, so a crash between deciding and acting still leaves evidence."),
+  );
+}
+
+const LEVELS = [
+  ["0", "L0 orchestrator: reasons over every request, holds inference, no tools"],
+  ["1", "L1 domain expert: domain-scoped inference, directs its L2s, no tools"],
+  ["2", "L2 worker (default): tools for non-dangerous work, NO inference"],
+  ["3", "L3 tool specialist: pure connectivity, no inference, no task context"],
+];
+
+const CAPS_PLACEHOLDER = `- tool: example.records.read
+  verb: read
+  impact: []
+  egress: { host: api.example.com, path: "/v1/records/**" }
+- tool: example.records.create
+  verb: create
+  impact: [financial]
+  egress: { host: api.example.com, path: "/v1/records" }`;
+
+export function AgentNewPage({ csrf, error = null, prefill = {} }) {
+  const val = (k, d = "") => prefill[k] ?? d;
+  return h(Layout, { title: "deploy agent", active: "deploy" },
+    h("h2", null, "Deploy a new agent"),
+    h("p", { className: "note" },
+      "This writes one omoda.skill.md and nothing else. The compiler is the only writer of policy: ",
+      "the manifest below is its only input, so the agent gets exactly what it declares. ",
+      "Writes carrying impact compile to GET-only until a recorded decision; an over-leveled manifest refuses to deploy."),
+    error ? h("div", { className: "err" }, error) : null,
+    h("form", { className: "stack", method: "POST", action: "/ui/agents/new" },
+      h("input", { type: "hidden", name: "csrf", value: csrf }),
+      h("label", null, "Skill name (kebab-case, becomes skills/<name>/)"),
+      h("input", { type: "text", name: "skill", required: true, placeholder: "invoice-chaser", defaultValue: val("skill") }),
+      h("label", null, "Agent name (kebab-case, the domain identity)"),
+      h("input", { type: "text", name: "agent", required: true, placeholder: "finance", defaultValue: val("agent") }),
+      h("label", null, "Level"),
+      h("select", { name: "level", defaultValue: val("level", "2") },
+        LEVELS.map(([v, t]) => h("option", { key: v, value: v }, t))),
+      h("label", null, "Inference grant (levels 0 and 1 only; refused otherwise)"),
+      h("select", { name: "inference", defaultValue: val("inference", "no") },
+        h("option", { value: "no" }, "no"),
+        h("option", { value: "yes" }, "yes")),
+      h("label", null, "Description (one line)"),
+      h("input", { type: "text", name: "description", placeholder: "Chases overdue invoices", defaultValue: val("description") }),
+      h("label", null, "Capabilities (YAML list; levels 0 and 1 leave this empty)"),
+      h("textarea", { name: "capabilities", rows: 10, placeholder: CAPS_PLACEHOLDER, defaultValue: val("capabilities") }),
+      h("label", null, "Instructions (prose the agent reads; becomes the md body)"),
+      h("textarea", { name: "instructions", rows: 6, placeholder: "What this agent is for, and how it should behave.", defaultValue: val("instructions") }),
+      h("label", null,
+        h("input", { type: "checkbox", name: "apply_now", value: "yes", style: { width: "auto", marginRight: 8 } }),
+        " apply now (restarts the service so the agent is live immediately)"),
+      h("button", { type: "submit" }, "Deploy agent"),
+    ),
+    h("p", { className: "note" },
+      "Every deploy is ledgered. Levels are enforced at compile time: an L2 cannot hold inference, an L3 cannot do local work."),
   );
 }
 
