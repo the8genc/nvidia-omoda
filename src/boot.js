@@ -156,6 +156,11 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const orchestrator = createOrchestrator({
     intents, registry: index, ledger, knowledge, judge, bus, levelMap,
     localAvailable: () => Boolean(sandbox) || Boolean(process.env.OMODA_LOCAL_MODEL),
+    // The hosted planner needs an API key. On a host deployment the key is not
+    // brokered in (that happens inside the sandbox), so treat hosted as
+    // unavailable when no key is set and let the router fall back to the local
+    // Omni that is already loaded. Otherwise the planner 401s and nothing routes.
+    hostedAvailable: () => Boolean(process.env.OMODA_HOSTED_KEY || process.env.NVIDIA_API_KEY),
     onEscalate: (args) => escalateToOperator?.(args),
   });
   routeIntent = (intent) => orchestrator.onIntent(intent);
