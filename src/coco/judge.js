@@ -183,11 +183,12 @@ export function createObservationJudge({
     const signals = candidateSignals(obs);
 
     // The take-action triggers are the ingest layer's quick reference: match the
-    // observation text (description, question) against the curated phrase list.
-    // A hit is a deterministic candidate that carries its own incident type, so
-    // it routes without a detection inference call.
-    const text = [obs.scene_description, obs.followup_question].filter(Boolean).join(". ");
-    const hit = triggers?.match(text) ?? null;
+    // curated phrase list against the SCENE DESCRIPTION only. The follow-up
+    // question is a prompt ("is there smoke, debris, or a downed sign?"), so
+    // matching it fired triggers on benign frames; training capture showed
+    // debris/signage/obstruction false-positives coming straight from the
+    // question text. The follow-up ANSWER is already a boolean danger signal.
+    const hit = triggers?.match(obs.scene_description ?? "") ?? null;
     if (hit) signals.push(`trigger:${hit.matchedPhrase}`);
 
     // Quiet observation: advance clearance on any open incidents for this camera.

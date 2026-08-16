@@ -14,7 +14,7 @@ import {
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
-import { render, SkillsPage, IntentsPage, LedgerPage, AuditPage, AgentNewPage, KnowledgePage, TriggersPage } from "../web/ui.js";
+import { render, SkillsPage, IntentsPage, LedgerPage, AuditPage, AgentNewPage, KnowledgePage, TriggersPage, TrainingPage } from "../web/ui.js";
 import { skillLevelMap } from "../telemetry/display.js";
 import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
@@ -76,6 +76,7 @@ export function createApp({
   skillsDir = "skills",
   knowledge = null,
   triggers = null,
+  training = null,
   l1Agents = [],
   // How "apply now" takes effect. The default exits non-zero after the response
   // has flushed, so systemd (Restart=on-failure) brings the service back with
@@ -264,6 +265,25 @@ export function createApp({
       triggers.remove(form.get("id"));
       res.writeHead(303, { location: "/ui/triggers" });
       return res.end();
+    }
+
+    if (path === "/ui/training" && method === "GET") {
+      if (!training) return html(503, "<p>training recorder not configured</p>");
+      return html(200, render(TrainingPage({ csrf, status: training.status() })));
+    }
+    if (path === "/ui/training/start" && method === "POST") {
+      if (!training) return html(503, "<p>training recorder not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const out = training.start();
+      return html(200, render(TrainingPage({ csrf, status: training.status(), added: out.file })));
+    }
+    if (path === "/ui/training/stop" && method === "POST") {
+      if (!training) return html(503, "<p>training recorder not configured</p>");
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const out = training.stop();
+      return html(200, render(TrainingPage({ csrf, status: training.status(), stopped: out })));
     }
 
     let raw = "";

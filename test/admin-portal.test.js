@@ -234,3 +234,36 @@ test("the audit page is admin-gated and shows the robust record with the chain s
   const empty = await req(app, { path: "/ui/audit?intent=nope" });
   assert.match(empty.body, /No matching audit records/);
 });
+
+test("the training button is admin-gated and starts/stops the recorder", async (t) => {
+  const { createBus } = await import("../src/bus.js");
+  const { createTrainingRecorder } = await import("../src/training/recorder.js");
+  const { createApp } = await import("../src/api/server.js");
+  const { createTokenStore } = await import("../src/api/auth.js");
+  const { createIntentStore } = await import("../src/api/intents.js");
+  const { createLedger } = await import("../src/ledger/ledger.js");
+  const bus = createBus();
+  const dir = mkdtempSync(join(tmpdir(), "omoda-traindir-"));
+  const training = createTrainingRecorder({ bus, triggers: mkTriggers(), dir });
+  const app = createApp({ tokens: createTokenStore(), ledger: createLedger({ path: `/tmp/omoda-tp-${Date.now()}.jsonl` }), intents: createIntentStore(), training });
+
+  assert.equal((await req(app, { path: "/ui/training", auth: null })).status, 401, "gated");
+  const idle = await req(app, { path: "/ui/training" });
+  assert.match(idle.body, /Agent training capture/);
+  assert.match(idle.body, /Start capture/);
+
+  const csrf = idle.body.match(/name="csrf" value="([a-f0-9]+)"/)[1];
+  const started = await req(app, { method: "POST", path: "/ui/training/start", form: { csrf } });
+  assert.match(started.body, /Recording started/);
+  assert.equal(training.status().active, true);
+
+  // a live description now gets recorded
+  bus.publish("observation", { description: "A car is on fire.", verdict: "incident", incidentType: "fire" });
+  const stopped = await req(app, { method: "POST", path: "/ui/training/stop", form: { csrf } });
+  assert.match(stopped.body, /Stopped\./);
+  assert.equal(training.status().active, false);
+  assert.equal(training.status().tally.total, 1);
+
+  // csrf is enforced
+  assert.equal((await req(app, { method: "POST", path: "/ui/training/start", form: { csrf: "bad" } })).status, 403);
+});
