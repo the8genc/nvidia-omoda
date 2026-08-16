@@ -24,6 +24,8 @@ export interface RgbMessage {
   seq: number
   index: number
   rgb: string
+  // main feed: false = privacy-obfuscated frame, true = raw frame (a hazard unlocked it). Backend-decided.
+  unlocked?: boolean
 }
 
 export interface LiveContext {
@@ -44,3 +46,14 @@ export interface LiveContext {
 }
 
 export const LIVE_KEY: InjectionKey<LiveContext> = Symbol('live')
+
+// the VLM scene description + public-hazard flag, provided once at the app root and consumed by the
+// banner (to display) and the main feed (to decide obfuscated-vs-raw)
+export interface SceneContext {
+  text: Readonly<Ref<string | null>>
+  danger: Readonly<Ref<boolean>>
+  pending: Readonly<Ref<boolean>>
+  reset: () => void
+}
+
+export const SCENE_KEY: InjectionKey<SceneContext> = Symbol('scene')

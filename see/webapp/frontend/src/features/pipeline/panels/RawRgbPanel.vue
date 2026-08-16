@@ -9,17 +9,24 @@ import { injectStrict } from '@/composables/injectStrict'
 
 const live = injectStrict(LIVE_KEY)
 
-type Mode = 'rgb' | 'boxes' | 'd4rt'
-const mode = ref<Mode>('rgb')
-const showBoxes = computed(() => mode.value === 'boxes')
-// only run detection (YOLOE) while boxes are actually on screen (d4rt has its own subscriber-gated model)
+type Mode = 'main' | 'boxes' | 'd4rt'
+const mode = ref<Mode>('main')
+// the backend firewall decides obfuscated-vs-raw on rgb-stream; the frontend just reflects its flag
+const unlocked = computed(() => live.latestRgb.value?.unlocked === true)
 watch(mode, (m) => live.setBoxesShown(m === 'boxes'), { immediate: true })
 const subtitle = computed(() =>
-  mode.value === 'd4rt' ? '3D reconstruction' : mode.value === 'boxes' ? 'detections' : 'live',
+  mode.value === 'd4rt'
+    ? '3D reconstruction'
+    : mode.value === 'boxes'
+      ? 'detections'
+      : unlocked.value
+        ? 'hazard · full feed unlocked'
+        : 'privacy · obfuscated',
 )
 
-const hasFrame = computed(() => live.latestRgb.value !== null)
-const rgbUrl = computed(() => live.latestRgb.value?.rgb ?? '')
+// the main feed always points at rgb-stream (which the backend serves obfuscated or raw)
+const displayUrl = computed(() => live.latestRgb.value?.rgb ?? '')
+const hasFrame = computed(() => displayUrl.value !== '')
 const shownBoxes = computed(() => live.displayedBoxes.value)
 
 // confidence -> rainbow ramp: blue (low) through green/yellow to red (high), rankable at a glance
@@ -36,13 +43,13 @@ function onImgLoad(): void {
 </script>
 
 <template>
-  <PanelFrame title="Raw RGB" :subtitle="subtitle">
+  <PanelFrame title="Main feed" :subtitle="subtitle">
     <template #actions>
       <div v-if="mode === 'boxes'" class="legend" aria-label="confidence scale">
         <span>low</span><i class="legend__bar"></i><span>high</span>
       </div>
       <div class="seg" role="group" aria-label="view mode">
-        <button class="seg__btn" :class="{ 'is-on': mode === 'rgb' }" @click="mode = 'rgb'">RGB</button>
+        <button class="seg__btn" :class="{ 'is-on': mode === 'main' }" @click="mode = 'main'">Main feed</button>
         <button class="seg__btn" :class="{ 'is-on': mode === 'boxes' }" @click="mode = 'boxes'">Boxes</button>
         <button class="seg__btn" :class="{ 'is-on': mode === 'd4rt' }" @click="mode = 'd4rt'">D4RT</button>
       </div>
@@ -50,15 +57,11 @@ function onImgLoad(): void {
 
     <div class="stage">
       <D4rtViewer v-if="mode === 'd4rt'" :enabled="true" class="d4rt" />
-      <div v-else-if="hasFrame" class="frame">
-        <img :src="rgbUrl" class="frame__img" alt="Raw RGB frame" draggable="false" @load="onImgLoad" />
-        <svg
-          v-if="showBoxes"
-          class="frame__overlay"
-          viewBox="0 0 1 1"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
+
+      <!-- boxes: shrink-wrapped so the 0..1 overlay maps exactly onto the pixels -->
+      <div v-else-if="mode === 'boxes' && hasFrame" class="frame">
+        <img :src="displayUrl" class="frame__img" alt="detections" draggable="false" @load="onImgLoad" />
+        <svg class="frame__overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
           <rect
             v-for="(b, i) in shownBoxes"
             :key="i"
@@ -71,7 +74,7 @@ function onImgLoad(): void {
             vector-effect="non-scaling-stroke"
           />
         </svg>
-        <div v-if="showBoxes" class="frame__labels">
+        <div class="frame__labels">
           <span
             v-for="(b, i) in shownBoxes"
             :key="i"
@@ -80,6 +83,20 @@ function onImgLoad(): void {
             >{{ b.label }} {{ Math.round(b.conf * 100) }}</span
           >
         </div>
+      </div>
+
+      <!-- main feed: fills the panel; crossfades obfuscated <-> raw on the hazard unlock -->
+      <div v-else-if="mode === 'main' && hasFrame" class="feed">
+        <Transition name="reveal">
+          <img
+            :key="unlocked ? 'raw' : 'obfuscated'"
+            :src="displayUrl"
+            class="feed__img"
+            alt="main feed"
+            draggable="false"
+            @load="onImgLoad"
+          />
+        </Transition>
       </div>
 
       <div v-else class="stage__empty">
@@ -126,6 +143,27 @@ function onImgLoad(): void {
 .d4rt {
   width: 100%;
   height: 100%;
+}
+/* main feed fills the panel; the two crossfading imgs stack absolutely during the reveal */
+.feed {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.feed__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.reveal-enter-active,
+.reveal-leave-active {
+  transition: opacity 0.5s ease;
+}
+.reveal-enter-from,
+.reveal-leave-to {
+  opacity: 0;
 }
 /* shrink-wraps the letterboxed image so the overlay maps 0..1 exactly onto the pixels */
 .frame {

@@ -5,13 +5,17 @@ import AppHeader from '@/features/pipeline/AppHeader.vue'
 import SceneBanner from '@/features/pipeline/SceneBanner.vue'
 import PanelGrid from '@/features/pipeline/PanelGrid.vue'
 import { useLiveStream } from '@/composables/useLiveStream'
-import { LIVE_KEY } from '@/types/pipeline'
+import { useSceneDescription } from '@/composables/useSceneDescription'
+import { LIVE_KEY, SCENE_KEY } from '@/types/pipeline'
 
 // live is always on: connect the websocket immediately and never toggle off
 const liveEnabled = ref(true)
 const live = useLiveStream(liveEnabled)
-
 provide(LIVE_KEY, live)
+
+// one VLM poll for the whole app: the banner displays it, the main feed uses its hazard flag
+const scene = useSceneDescription()
+provide(SCENE_KEY, scene)
 </script>
 
 <template>
