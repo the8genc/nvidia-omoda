@@ -23,7 +23,7 @@ import { screenText } from "../models/screen.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { telemetry } from "../telemetry/agentic.js";
 
-export const INCIDENT_TYPES = ["traffic-accident", "fallen-signage", "road-maintenance", "other"];
+export const INCIDENT_TYPES = ["traffic-accident", "fire", "fallen-signage", "road-maintenance", "other"];
 
 /**
  * Stage 1. Pure, cheap, and deliberately concrete: every trigger names a field
