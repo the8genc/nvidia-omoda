@@ -25,7 +25,7 @@ async function call(app, { method = "GET", path, token, body, idem, skewSec = 0,
   const raw = body === undefined ? "" : JSON.stringify(body);
   const ts = Math.floor(Date.now() / 1000) + skewSec;
   const headers = { authorization: token ? `Bearer ${token.token}` : undefined };
-  if (method === "POST") {
+  if (method === "POST" || method === "PUT") {
     headers["x-omoda-timestamp"] = String(ts);
     headers["x-omoda-signature"] = sig ?? signBody(token.secret, ts, raw);
     if (idem) headers["idempotency-key"] = idem;
@@ -187,4 +187,35 @@ test("S12: an unauthenticated call is never ledgered as if it were real", async 
   const before = app.ledger.length;
   await call(app, { path: "/v1/ledger" }); // no token
   assert.equal(app.ledger.length, before, "auth failures do not pollute the action ledger");
+});
+
+test("PUT updates a previously posted engagement over HTTP, signed like a POST", async () => {
+  const { app, see } = harness();
+  const created = await call(app, { method: "POST", path: "/v1/intents", token: see, body: propose, idem: "k-put" });
+  const r = await call(app, {
+    method: "PUT", path: `/v1/intents/${created.body.intent_id}`,
+    token: see, body: { confidence: 0.99, evidence: { frames: 3 } },
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.updates, 1);
+});
+
+test("an unsigned PUT is refused: an update is a write and signs like one", async () => {
+  const { app, see } = harness();
+  const created = await call(app, { method: "POST", path: "/v1/intents", token: see, body: propose, idem: "k-put2" });
+  const r = await call(app, {
+    method: "PUT", path: `/v1/intents/${created.body.intent_id}`,
+    token: see, body: { confidence: 0.5 }, sig: "sha256=forged",
+  });
+  assert.equal(r.status, 401);
+});
+
+test("a PUT carrying a verdict fails the strict schema before any semantics run", async () => {
+  const { app, see } = harness();
+  const created = await call(app, { method: "POST", path: "/v1/intents", token: see, body: propose, idem: "k-put3" });
+  const r = await call(app, {
+    method: "PUT", path: `/v1/intents/${created.body.intent_id}`,
+    token: see, body: { verdict: "approve" },
+  });
+  assert.equal(r.status, 422);
 });
