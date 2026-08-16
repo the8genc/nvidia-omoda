@@ -22,6 +22,9 @@ export function createTelegramLoop({
   // The undo registry (src/broker/undo.js). UNDO replays the registered inverse
   // through it; without it, UNDO honestly reports it cannot reverse.
   undo = null,
+  // Called when an approval SETTLES (quorum met): runs the approved action
+  // through the Broker so the audit trail shows it execute and revert.
+  onApproved = null,
 }) {
   if (!client) throw new Error("telegram loop requires a client");
   if (!operator) throw new Error("telegram loop requires an operator identity");
@@ -97,6 +100,13 @@ export function createTelegramLoop({
             intentId: cmd.intentId,
           });
         } catch { /* never break the loop on a publish */ }
+      }
+      // Settled approval: run it through the Broker so the audit trail completes
+      // (capability materialises -> executed -> reverted). A denial or a partial
+      // two-person tap does not execute. Failures are handled inside onApproved.
+      if (onApproved && out.ok && out.decision?.verdict === "approve" && out.decision?.settled !== false && decided) {
+        try { await onApproved({ intent: intents.get(cmd.intentId), action: decided, decision: out.decision }); }
+        catch { /* onApproved records its own failure; never break the loop */ }
       }
       return { ...cmd, ok: out.ok };
     }
