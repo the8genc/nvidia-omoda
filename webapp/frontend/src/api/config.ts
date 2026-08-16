@@ -15,6 +15,10 @@ export function rgbWsUrl(): string {
   return `${WS_BASE}/local/rgb-stream`
 }
 
+export function d4rtWsUrl(): string {
+  return `${WS_BASE}/local/d4rt-stream`
+}
+
 // on-demand VLM description of the latest frame (polled by the banner)
 export function describeUrl(): string {
   return `${API_BASE}/describe`

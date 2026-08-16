@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from pipeline import Pipeline, vlm
+from pipeline.d4rt_live import D4rtLoop
 from pipeline.live import LiveLoop
 
 # curated demo clips; the cycle button steps through them (add more files here, no code change)
@@ -34,6 +35,7 @@ print(f"pipeline ready on {PIPELINE.device}", flush=True)
 LIVE_ROOT = Path("/work/webapp/backend/live")
 LIVE_ROOT.mkdir(parents=True, exist_ok=True)
 LIVE = LiveLoop(PIPELINE, DEFAULT_SOURCE)
+D4RT = D4rtLoop(LIVE)
 
 
 class _Observability:
@@ -66,7 +68,9 @@ OBS = _Observability()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # start the always-on worker once, at boot — it runs independent of any observer
-    LIVE.start(asyncio.get_running_loop())
+    loop = asyncio.get_running_loop()
+    LIVE.start(loop)
+    D4RT.start(loop)  # its own worker; idles until a d4rt viewer subscribes
     yield
 
 
@@ -99,6 +103,20 @@ async def detection_stream(ws: WebSocket):
 async def rgb_stream(ws: WebSocket):
     # most sensitive: the raw camera pixels
     await _serve(ws, "rgb")
+
+
+@app.websocket("/api/local/d4rt-stream")
+async def d4rt_stream(ws: WebSocket):
+    # binary point-cloud frames (self-describing wire format); model runs only while subscribed
+    await ws.accept()
+    D4RT.add_client(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        D4RT.remove_client(ws)
 
 
 @app.post("/api/live/source")

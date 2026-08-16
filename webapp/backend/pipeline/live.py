@@ -51,6 +51,10 @@ class LiveLoop:
     def latest_frame(self):
         return self._last_rgb
 
+    def current_source(self):
+        # the source currently playing (the D4RT worker feeds its own capture off this)
+        return self._source
+
     def pause(self):
         self._running = False
 

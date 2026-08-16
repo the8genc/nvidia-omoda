@@ -3,14 +3,20 @@
 import { computed, ref, watch } from 'vue'
 import { ImageOff } from 'lucide-vue-next'
 import PanelFrame from '@/components/layout/PanelFrame.vue'
+import D4rtViewer from '@/features/pipeline/panels/D4rtViewer.vue'
 import { LIVE_KEY } from '@/types/pipeline'
 import { injectStrict } from '@/composables/injectStrict'
 
 const live = injectStrict(LIVE_KEY)
 
-const showBoxes = ref(false)
-// only run detection (YOLOE) while boxes are actually on screen
-watch(showBoxes, (on) => live.setBoxesShown(on), { immediate: true })
+type Mode = 'rgb' | 'boxes' | 'd4rt'
+const mode = ref<Mode>('rgb')
+const showBoxes = computed(() => mode.value === 'boxes')
+// only run detection (YOLOE) while boxes are actually on screen (d4rt has its own subscriber-gated model)
+watch(mode, (m) => live.setBoxesShown(m === 'boxes'), { immediate: true })
+const subtitle = computed(() =>
+  mode.value === 'd4rt' ? '3D reconstruction' : mode.value === 'boxes' ? 'detections' : 'live',
+)
 
 const hasFrame = computed(() => live.latestRgb.value !== null)
 const rgbUrl = computed(() => live.latestRgb.value?.rgb ?? '')
@@ -30,19 +36,21 @@ function onImgLoad(): void {
 </script>
 
 <template>
-  <PanelFrame title="Raw RGB" :subtitle="showBoxes ? 'detections' : 'live'">
+  <PanelFrame title="Raw RGB" :subtitle="subtitle">
     <template #actions>
-      <div v-if="showBoxes" class="legend" aria-label="confidence scale">
+      <div v-if="mode === 'boxes'" class="legend" aria-label="confidence scale">
         <span>low</span><i class="legend__bar"></i><span>high</span>
       </div>
-      <div class="seg" role="group" aria-label="overlay mode">
-        <button class="seg__btn" :class="{ 'is-on': !showBoxes }" @click="showBoxes = false">RGB</button>
-        <button class="seg__btn" :class="{ 'is-on': showBoxes }" @click="showBoxes = true">Boxes</button>
+      <div class="seg" role="group" aria-label="view mode">
+        <button class="seg__btn" :class="{ 'is-on': mode === 'rgb' }" @click="mode = 'rgb'">RGB</button>
+        <button class="seg__btn" :class="{ 'is-on': mode === 'boxes' }" @click="mode = 'boxes'">Boxes</button>
+        <button class="seg__btn" :class="{ 'is-on': mode === 'd4rt' }" @click="mode = 'd4rt'">D4RT</button>
       </div>
     </template>
 
     <div class="stage">
-      <div v-if="hasFrame" class="frame">
+      <D4rtViewer v-if="mode === 'd4rt'" :enabled="true" class="d4rt" />
+      <div v-else-if="hasFrame" class="frame">
         <img :src="rgbUrl" class="frame__img" alt="Raw RGB frame" draggable="false" @load="onImgLoad" />
         <svg
           v-if="showBoxes"
@@ -114,6 +122,10 @@ function onImgLoad(): void {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+.d4rt {
+  width: 100%;
+  height: 100%;
 }
 /* shrink-wraps the letterboxed image so the overlay maps 0..1 exactly onto the pixels */
 .frame {
