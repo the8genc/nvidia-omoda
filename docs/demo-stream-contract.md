@@ -17,7 +17,7 @@ case the outputs are ever locked again (`outputs.open` in boot).
 |---|---|---|
 | `/v1/out/frames` | video frame | `{topic:"frame", at, seq, index, rgb}` where `rgb` is the JPEG data URI relayed verbatim from COCO |
 | `/v1/out/observations` | COCO description | `{topic:"observation", at, source, description, prompt, followup, danger_signal, verdict, intentId?, incidentType?, severity?, signals?}` |
-| `/v1/out/agents` | ledgered action | `{topic:"agent", at, entry}` where `entry` is the full hash-chained ledger record: seq, agent, tool, verb, tier, outcome, authority, intentId, hash |
+| `/v1/out/agents` | agent action | `{topic:"agent", at, name, level, action, instruction, outcome, tier, seq}` — a compact display projection (see below) |
 | `/v1/out/agentic` | agentic event | `{topic:"agentic", at, event, correlationId, actor, target?, intentId?, detail}` — the fine-grained narration stream, catalog below |
 
 ## What the observation verdicts mean
@@ -36,6 +36,24 @@ Every action the platform records, as it lands: `judge.incident`,
 `telegram.decide`, `ui.agent.deploy`, gateway calls, `coco.describe` questions.
 The demo app renders this as the live "what are the agents doing" panel; the
 `tier` field (safe, contained, consequential, prohibited) is the color coding.
+
+## The agent-action stream (`/v1/out/agents`)
+
+Compact by design: one event per action an agent takes, carrying only what the
+dashboard renders.
+
+| field | meaning |
+|---|---|
+| `name` | the agent's name (`finance`, `accident`, `emergency-dispatch`, `l0`, `operator:arif`) |
+| `level` | its org-chart level: `0`–`3` for L0–L3 agents, `"operator"` for the human, `"input"` for a camera/See feed, `null` if unranked |
+| `action` | what it is doing: verb + tool, e.g. `create quickbooks.invoice.create` |
+| `instruction` | what it was told to do: the reason/outcome it was given |
+| `outcome` | result: `executed`, `admitted`, `refused`, `escalated`, `undone`… (colour by `tier`) |
+| `seq` | the ledger sequence number |
+
+The full hash-chained record (authority, hash, prevHash, payload) is not on this
+wire; it stays on disk and on `GET /v1/ledger`, one `seq` lookup away for anyone
+auditing. The stream is for display; the audit is for proof.
 
 ## The agentic narration stream (`/v1/out/agentic`)
 

@@ -27,6 +27,7 @@ import { createObservationJudge } from "./coco/judge.js";
 import { createCocoLive } from "./coco/live.js";
 import { createBus } from "./bus.js";
 import { createAgenticTelemetry, setGlobalTelemetry } from "./telemetry/agentic.js";
+import { toAgentDisplay, skillLevelMap } from "./telemetry/display.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -97,9 +98,15 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const bus = createBus();
   // Every instrumented module narrates onto /v1/out/agentic from here on.
   setGlobalTelemetry(createAgenticTelemetry({ bus }));
+  // agent-name -> level, so the compact agent-action stream can label each hop.
+  const levelMap = skillLevelMap(skills);
   const ledger = createLedger({
     path: process.env.OMODA_LEDGER ?? "var/ledger/actions.jsonl",
-    onAppend: (rec) => bus.publish("agent", { entry: rec }),
+    // The agent-action stream is a compact projection for the dashboard: name,
+    // level, action, instruction (plus seq/tier for ordering and colour). The
+    // full hash-chained record stays on disk and on /v1/ledger, one seq lookup
+    // away.
+    onAppend: (rec) => bus.publish("agent", toAgentDisplay(rec, levelMap)),
   });
   // A deployment with a single operator identity cannot satisfy a two-person
   // rule; the store fails those closed rather than accept one tap. The operator

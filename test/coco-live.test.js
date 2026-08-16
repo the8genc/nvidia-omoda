@@ -9,6 +9,7 @@ import { createLedger } from "../src/ledger/ledger.js";
 import { createStreamIngest, attachStreamServer } from "../src/api/stream.js";
 import { createTokenStore } from "../src/api/auth.js";
 import { bridgeSocket } from "../src/api/outputs.js";
+import { toAgentDisplay } from "../src/telemetry/display.js";
 import { MODEL, ENDPOINT } from "../src/models/router.js";
 
 const ledger = (onAppend) => createLedger({ path: `/tmp/omoda-live-${Date.now()}-${Math.random()}.jsonl`, onAppend });
@@ -31,7 +32,7 @@ function harness({ reply = INCIDENT } = {}) {
   const bus = createBus();
   const intents = createIntentStore();
   const inference = fakeInference(reply);
-  const led = ledger((rec) => bus.publish("agent", { entry: rec }));
+  const led = ledger((rec) => bus.publish("agent", toAgentDisplay(rec)));
   const judge = createObservationJudge({ intents, ledger: led, inference });
   const live = createCocoLive({
     base: "http://coco.test:8091", judge, bus, ledger: led,
@@ -127,14 +128,19 @@ test("describe() asks the one-off question and is ledgered either way", async ()
   assert.ok(led.all().some((e) => e.tool === "coco.describe" && e.outcome === "answered"));
 });
 
-test("agent activity flows to the bus through the ledger hook", async () => {
+test("agent activity reaches the bus as a compact display event: name, level, action, instruction", async () => {
   const { bus, led } = harness();
   const agentEvents = [];
   bus.subscribe("agent", (e) => agentEvents.push(e));
-  led.append({ kind: "api", agent: "operator:arif", tool: "intents.update", verb: "update", outcome: "updated" });
+  led.append({ kind: "api", agent: "operator:arif", tool: "intents.update", verb: "update", outcome: "updated", reason: "operator edited the engagement" });
   assert.equal(agentEvents.length, 1);
-  assert.equal(agentEvents[0].entry.tool, "intents.update");
-  assert.ok(agentEvents[0].entry.hash, "the demo app sees the same hash-chained record the audit does");
+  const e = agentEvents[0];
+  assert.equal(e.name, "operator:arif");
+  assert.equal(e.level, "operator");
+  assert.equal(e.action, "update intents.update");
+  assert.equal(e.instruction, "operator edited the engagement");
+  assert.equal(e.seq, 1, "seq links back to the full hash-chained record on /v1/ledger");
+  assert.equal(e.entry, undefined, "the bulky record is not on the wire");
 });
 
 // ── the output layer over a REAL socket ───────────────────────────────────
@@ -175,12 +181,13 @@ test("the demo app subscribes with no token and sees frames, observations, and a
 
   bus.publish("frame", { seq: 1, rgb: TINY_JPEG });
   bus.publish("observation", { description: "nominal", verdict: "nominal" });
-  bus.publish("agent", { entry: { tool: "judge.incident", outcome: "intent-opened" } });
+  bus.publish("agent", toAgentDisplay({ seq: 7, agent: "omoda:judge", tool: "judge.incident", outcome: "intent-opened", reason: "traffic-accident high" }));
 
   await new Promise((resolve) => { const i = setInterval(() => { if (received.frame.length && received.observation.length && received.agent.length) { clearInterval(i); resolve(); } }, 15); });
   assert.equal(received.frame[0].seq, 1);
   assert.equal(received.observation[0].verdict, "nominal");
-  assert.equal(received.agent[0].entry.tool, "judge.incident");
+  assert.equal(received.agent[0].action, "judge.incident");
+  assert.equal(received.agent[0].level, 0, "the judge is L0");
 });
 
 test("a lagging viewer gets frames dropped, never an unbounded queue", () => {
