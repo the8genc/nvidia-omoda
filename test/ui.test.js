@@ -26,10 +26,14 @@ function harness() {
   return { app, intents, ledger, see, op };
 }
 
+// The portal sits behind Basic auth now (it can write). Tests authenticate with
+// the documented default credential.
+const ADMIN = "Basic " + Buffer.from("omoda-admin:SparkDo-OMODA-2026").toString("base64");
+
 async function get(app, path) {
   let status, body = "";
   const res = { writeHead(s) { status = s; }, end(b) { body = String(b ?? ""); } };
-  await app.handle({ method: "GET", url: path, headers: {}, async *[Symbol.asyncIterator]() {} }, res);
+  await app.handle({ method: "GET", url: path, headers: { authorization: ADMIN }, async *[Symbol.asyncIterator]() {} }, res);
   return { status, body };
 }
 
@@ -39,7 +43,7 @@ async function post(app, path, form) {
   const res = { writeHead(s, hh) { status = s; headers = hh; }, end(b) { body = String(b ?? ""); } };
   const chunks = [Buffer.from(raw)];
   await app.handle(
-    { method: "POST", url: path, headers: {}, async *[Symbol.asyncIterator]() { for (const c of chunks) yield c; } },
+    { method: "POST", url: path, headers: { authorization: ADMIN }, async *[Symbol.asyncIterator]() { for (const c of chunks) yield c; } },
     res,
   );
   return { status, body, headers };

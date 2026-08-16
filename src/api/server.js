@@ -14,7 +14,13 @@ import {
 import { createIntentStore, INTENT_STATE } from "./intents.js";
 import { createLedger } from "../ledger/ledger.js";
 import { randomBytes } from "node:crypto";
-import { render, SkillsPage, IntentsPage, LedgerPage } from "../web/ui.js";
+import { render, SkillsPage, IntentsPage, LedgerPage, AgentNewPage } from "../web/ui.js";
+import { checkAdminAuth, unauthorized } from "../web/admin-auth.js";
+import { safeParseManifest } from "../schema/manifest.js";
+import { compile } from "../policy/compile.js";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 const ProposeBody = z.object({
   source: z.string().min(1).optional(),
@@ -63,7 +69,15 @@ async function readBody(req, limit = 256 * 1024) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [], uiOperator = null } = {}) {
+export function createApp({
+  tokens, ledger, intents, nonces, limiter, skills = [], uiOperator = null,
+  skillsDir = "skills",
+  // How "apply now" takes effect. The default exits non-zero after the response
+  // has flushed, so systemd (Restart=on-failure) brings the service back with
+  // the new skill loaded. Injected so tests never kill their own process.
+  onApply = () => setTimeout(() => process.exit(64), 400),
+  adminCreds = undefined,
+} = {}) {
   // The UI is server-rendered and acts on the operator's behalf server-side, so
   // the operator credential never reaches a browser. CSRF is a per-process
   // token because this control plane is single-operator and tailnet-only.
@@ -92,7 +106,78 @@ export function createApp({ tokens, ledger, intents, nonces, limiter, skills = [
       res.end(markup);
     };
 
-    if (path === "/ui" && method === "GET") return html(200, render(SkillsPage({ skills })));
+    // The portal can write (deploying an agent provisions capability), so every
+    // /ui route sits behind Basic auth. API routes keep their own token auth.
+    if (path === "/ui" || path.startsWith("/ui/")) {
+      if (!checkAdminAuth(req.headers, adminCreds).ok) return unauthorized(res);
+    }
+
+    if (path === "/ui" && method === "GET") {
+      return html(200, render(SkillsPage({ skills, deployed: url.searchParams.get("deployed") })));
+    }
+    if (path === "/ui/agents/new" && method === "GET") {
+      return html(200, render(AgentNewPage({ csrf })));
+    }
+    if (path === "/ui/agents/new" && method === "POST") {
+      const form = new URLSearchParams(await readBody(req));
+      if (form.get("csrf") !== csrf) return html(403, "<p>bad csrf token</p>");
+      const prefill = Object.fromEntries(form.entries());
+      const fail = (error) => html(422, render(AgentNewPage({ csrf, error, prefill })));
+
+      let capabilities = [];
+      const capsRaw = (form.get("capabilities") ?? "").trim();
+      if (capsRaw) {
+        try {
+          capabilities = parseYaml(capsRaw);
+          if (!Array.isArray(capabilities)) return fail("capabilities must be a YAML list");
+        } catch (err) {
+          return fail(`capabilities is not valid YAML: ${String(err.message).slice(0, 200)}`);
+        }
+      }
+
+      const manifest = {
+        skill: (form.get("skill") ?? "").trim(),
+        agent: (form.get("agent") ?? "").trim(),
+        level: Number(form.get("level") ?? 2),
+        inference: form.get("inference") === "yes",
+        ...(form.get("description")?.trim() ? { description: form.get("description").trim() } : {}),
+        capabilities,
+      };
+
+      // The same gate the loader applies at boot: schema (levels included), then
+      // a full compile. A manifest that would refuse to boot refuses to deploy.
+      const parsed = safeParseManifest(manifest);
+      if (!parsed.success) return fail(parsed.error.issues.map((i) => i.message).join("; ").slice(0, 400));
+      try { compile(parsed.data); }
+      catch (err) { return fail(`manifest does not compile: ${String(err.message).slice(0, 300)}`); }
+
+      const dir = join(skillsDir, parsed.data.skill);
+      if (existsSync(dir)) return fail(`skill "${parsed.data.skill}" already exists; deploys never overwrite an enabled agent`);
+
+      const instructions = (form.get("instructions") ?? "").trim();
+      const md = `---\n${stringifyYaml(manifest)}---\n${instructions ? instructions + "\n" : ""}`;
+      try {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "omoda.skill.md"), md, { mode: 0o644 });
+      } catch (err) {
+        return html(500, render(AgentNewPage({ csrf, error: `write failed: ${err.message}`, prefill })));
+      }
+
+      const applyNow = form.get("apply_now") === "yes";
+      try {
+        ledger.append({
+          kind: "ui", agent: uiOperator?.id ?? "admin", tool: "ui.agent.deploy", verb: "create",
+          outcome: "deployed", reason: `${parsed.data.skill} level=${parsed.data.level} applyNow=${applyNow}`,
+        });
+      } catch {
+        return html(503, "<p>ledger unavailable; refusing to deploy unlogged</p>");
+      }
+
+      res.writeHead(303, { location: `/ui?deployed=${encodeURIComponent(parsed.data.skill)}` });
+      res.end();
+      if (applyNow) onApply();
+      return;
+    }
     if (path === "/ui/intents" && method === "GET") {
       return html(200, render(IntentsPage({ intents: intents.all(), csrf })));
     }
