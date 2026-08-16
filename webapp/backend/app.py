@@ -41,9 +41,10 @@ print(f"pipeline ready on {PIPELINE.device}", flush=True)
 # uploaded live sources land here (uncached, always looped fresh); the shared loop broadcasts to every connected socket
 LIVE_ROOT = Path("/work/webapp/backend/live")
 LIVE_ROOT.mkdir(parents=True, exist_ok=True)
-LIVE = LiveLoop(PIPELINE, DEFAULT_SOURCE)
 # owns the warm D4RT engine + per-clip static-world cache; sessions are per-socket
 D4RT = D4rtService()
+# the live loop borrows D4RT's warm engine for the depth privacy view on rgb-stream
+LIVE = LiveLoop(PIPELINE, DEFAULT_SOURCE, depth_service=D4RT)
 
 
 class _Observability:
@@ -249,9 +250,29 @@ async def live_next_default():
     return {"index": _default_index, "name": src.name}
 
 
+@app.post("/api/live/privacy-mode")
+async def live_privacy_mode(mode: str):
+    # switch the locked privacy view between "sam" (FastSAM, default) and "depth" (Open-d4rt)
+    LIVE.set_privacy_mode(mode)
+    return {"mode": mode}
+
+
+@app.post("/api/reveal")
+async def reveal(seconds: float = 10.0):
+    # demo override: unlock the raw feed for `seconds`, then re-lock
+    LIVE.reveal(seconds)
+    return {"revealed": True, "seconds": seconds}
+
+
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "device": PIPELINE.device, "detector": PIPELINE.detector_id, "running": LIVE.is_running()}
+    return {
+        "ok": True,
+        "device": PIPELINE.device,
+        "detector": PIPELINE.detector_id,
+        "running": LIVE.is_running(),
+        "privacyMode": LIVE.privacy_mode(),
+    }
 
 
 def _describe_frame(frame, prompt, followup_q, followup_bool):

@@ -44,3 +44,13 @@ export function liveResumeUrl(): string {
 export function liveNextDefaultUrl(): string {
   return `${API_BASE}/live/next-default`
 }
+
+// switch the locked privacy view: ?mode=sam (default) | depth
+export function privacyModeUrl(mode: 'sam' | 'depth'): string {
+  return `${API_BASE}/live/privacy-mode?mode=${mode}`
+}
+
+// demo override: unlock the raw feed for a few seconds
+export function revealUrl(seconds = 10): string {
+  return `${API_BASE}/reveal?seconds=${seconds}`
+}

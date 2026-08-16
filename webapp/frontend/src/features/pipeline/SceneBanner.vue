@@ -1,11 +1,34 @@
 <!-- Concern: thin top banner showing the periodically-polled VLM scene description, with a play/stop control for the whole inference loop | Non-concern: polling/the VLM call and the pause/resume request (composables + backend own that) | IO: () -> banner -->
 <script setup lang="ts">
-import { Flag, Play, SkipForward, Sparkles, Square } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { Eye, Flag, Mountain, Play, SkipForward, Sparkles, Square } from 'lucide-vue-next'
 import { LIVE_KEY, SCENE_KEY } from '@/types/pipeline'
 import { injectStrict } from '@/composables/injectStrict'
+import { privacyModeUrl, revealUrl } from '@/api/config'
 
 const { text, danger, pending, reset } = injectStrict(SCENE_KEY)
 const live = injectStrict(LIVE_KEY)
+
+// the locked privacy view: false = FastSAM (backend default), true = Open-d4rt depth
+const depthOn = ref(false)
+
+async function toggleDepth(): Promise<void> {
+  const next = depthOn.value ? 'sam' : 'depth'
+  try {
+    const res = await fetch(privacyModeUrl(next), { method: 'POST' })
+    if (res.ok) depthOn.value = !depthOn.value
+  } catch {
+    // on failure the mode simply does not flip
+  }
+}
+
+async function reveal(): Promise<void> {
+  try {
+    await fetch(revealUrl(10), { method: 'POST' })
+  } catch {
+    // no-op on failure; the feed stays locked
+  }
+}
 
 async function toggleRun(): Promise<void> {
   try {
@@ -31,6 +54,17 @@ async function cycle(): Promise<void> {
     <Flag v-if="danger" :size="20" :stroke-width="2.5" class="banner__flag" />
     <Sparkles v-else :size="18" :stroke-width="2" class="banner__icon" />
     <span class="banner__text">{{ text ?? 'Analyzing scene…' }}</span>
+    <button
+      class="banner__btn"
+      :class="{ 'is-active': depthOn }"
+      :title="depthOn ? 'Depth privacy view (on)' : 'Turn on depth privacy view'"
+      @click="toggleDepth"
+    >
+      <Mountain :size="16" :stroke-width="2.5" />
+    </button>
+    <button class="banner__btn" title="Reveal raw feed (10s)" @click="reveal">
+      <Eye :size="16" :stroke-width="2.5" />
+    </button>
     <button class="banner__btn" title="Next clip" @click="cycle">
       <SkipForward :size="16" :stroke-width="2.5" />
     </button>
@@ -104,6 +138,11 @@ async function cycle(): Promise<void> {
 }
 .banner__btn:hover {
   background: var(--color-accent-soft);
+}
+.banner__btn.is-active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
 }
 .banner.is-pending {
   opacity: 0.85;

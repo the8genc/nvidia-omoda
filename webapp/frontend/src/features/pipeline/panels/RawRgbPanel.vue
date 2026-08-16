@@ -56,7 +56,7 @@ function onImgLoad(): void {
     </template>
 
     <div class="stage">
-      <D4rtViewer v-if="mode === 'd4rt'" :enabled="true" :unlocked="unlocked" class="d4rt" />
+      <D4rtViewer v-if="mode === 'd4rt'" :enabled="true" class="d4rt" />
 
       <!-- boxes: shrink-wrapped so the 0..1 overlay maps exactly onto the pixels -->
       <div v-else-if="mode === 'boxes' && hasFrame" class="frame">
