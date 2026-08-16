@@ -37,6 +37,10 @@ class LiveLoop:
         self._wake = threading.Event()
         # the privacy firewall: the main feed is a privacy view by default; a hazard unlocks raw.
         self._hazard = False
+        # a demo reveal unlocks the raw feed until this monotonic deadline; 0 = no reveal. Serialising
+        # the reveal as one timestamp (not a flag + timer) keeps it race-free: every frame just asks
+        # "is now past the deadline?"
+        self._reveal_until = 0.0
         # which privacy view to serve: "sam" (FastSAM segmentation, the cheap default) or
         # "depth" (Open-d4rt depth map), turned on from the UI when wanted
         self._privacy_mode = "sam"
@@ -61,8 +65,15 @@ class LiveLoop:
             self._busy.discard(ws)
 
     def set_source(self, path):
+        # a new clip starts from the safe defaults: locked (privacy on), FastSAM, no lingering reveal.
         with self._cv:
             self._pending_source = path
+            self._hazard = False
+            self._reveal_until = 0.0
+            self._privacy_mode = "sam"
+            if self._depth is not None:
+                self._depth.reset()  # the old clip's locked scale/ground/range do not carry over
+            self._cv.notify_all()
         self._wake.set()  # break the rgb pacing wait so the swap is immediate
 
     def latest_frame(self):
@@ -88,9 +99,15 @@ class LiveLoop:
         return self._hazard
 
     def reveal(self, seconds=10.0):
-        # demo override: unlock the raw feed now and re-lock after `seconds`, scheduled on the event loop
-        self.set_hazard(True)
-        self._loop.call_later(seconds, lambda: self.set_hazard(False))
+        # demo override: unlock the raw feed until now + seconds. One deadline, no timer to fall out of
+        # sync — the loop re-locks itself the first frame past it.
+        with self._cv:
+            self._reveal_until = time.monotonic() + max(0.0, seconds)
+            self._cv.notify_all()
+
+    def _unlocked(self):
+        # raw feed shows when a hazard is flagged or a demo reveal is still within its window
+        return self._hazard or time.monotonic() < self._reveal_until
 
     def set_privacy_mode(self, mode):
         # "depth" -> Open-d4rt depth map; "sam" -> FastSAM segmentation. Toggled live, no restart.
@@ -212,9 +229,9 @@ class LiveLoop:
             with self._cv:
                 self._latest_frame = (raw_bgr, seq, i, n_frames)
                 self._cv.notify_all()
-            # hazard: the raw feed is unlocked, emit it here at source fps; the privacy view (locked) is
-            # produced on the privacy thread so its GPU cost never throttles this decode loop.
-            if self._clients["rgb"] and self._hazard:
+            # unlocked (hazard or an active reveal): emit the raw feed here at source fps; the privacy
+            # view (locked) is produced on the privacy thread so its GPU cost never throttles this loop.
+            if self._clients["rgb"] and self._unlocked():
                 self._emit("rgb", json.dumps({"seq": seq, "index": i, "rgb": raw_uri, "unlocked": True}))
             i += 1
             lag = frame_dt - (time.monotonic() - t0)
@@ -226,7 +243,7 @@ class LiveLoop:
         # the freshest frame, blocked when nobody is watching or a hazard is serving raw. Fail CLOSED:
         # on error emit nothing rather than leak raw pixels.
         last_seq = -1
-        wanted = lambda: bool(self._clients["rgb"]) and not self._hazard
+        wanted = lambda: bool(self._clients["rgb"]) and not self._unlocked()
         while True:
             raw_bgr, seq, i, _ = self._next_frame("rgb", last_seq, wanted)
             last_seq = seq

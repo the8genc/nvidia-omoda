@@ -47,7 +47,6 @@ class DepthPrivacy:
         self._service = service  # D4rtService: owns the warm engine + gpu lock
         self._grid = int(grid_side)
         self._recon = None
-        self._session = None  # the held-open bf16 session; stored so it is not GC'd
         self._history = deque(maxlen=PAIR_GAP + 1)  # recent RGB frames, newest last
         self._range = None  # max |normalised depth|, locked off the first frame
 
@@ -57,18 +56,18 @@ class DepthPrivacy:
         # falls back to the segmentation view rather than a blank feed.
         return self._service.loaded
 
+    def reset(self):
+        # a new clip invalidates the locked scale, the fitted ground and the colour
+        # range; drop the reconstructor so the next frame rebuilds them from scratch.
+        self._recon = None
+        self._history.clear()
+        self._range = None
+
     def _reconstructor(self):
         if self._recon is None:
             self._recon = self._service.engine.live_reconstructor(
                 grid_side=self._grid, segment=False, aspect=16 / 9
             )
-            # Hold the autocast/inference session open for the life of the stream:
-            # reconstruct_window() requires it, and entering it per frame is what
-            # made this slow. STORE the context manager — dropping it lets the
-            # generator get GC'd, which runs its finally and closes the session.
-            # Only ever driven from the one rgb thread, so the autocast stays valid.
-            self._session = self._recon.session()
-            self._session.__enter__()
             # fit the road plane on the first pair, so the cloud is rotated level
             # and we can colour by height above the road rather than raw depth.
             self._recon.request_calibration()
