@@ -7,6 +7,8 @@ import time
 
 import cv2
 
+from .obfuscator import Obfuscator
+
 # one websocket path per concern. Add a new concern here and emit its payload from the owning thread.
 STREAMS = ("detection", "rgb")
 
@@ -26,10 +28,13 @@ class LiveLoop:
         self._busy = set()
         self._loop = None
         self._seq = 0
-        self._last_rgb = None  # latest frame as a jpeg data-uri, for on-demand VLM describe_scene
+        self._last_rgb = None  # latest RAW frame as a jpeg data-uri, for the VLM only (it must see the real scene)
         self._running = True
         self._latest_frame = None  # (raw_bgr, seq, index, n_frames) handed from RGB -> detection thread
         self._frame_lock = threading.Lock()
+        # the privacy firewall: the main feed (rgb-stream) is obfuscated by default; a hazard unlocks raw
+        self._hazard = False
+        self._obfuscator = Obfuscator()
 
     def start(self, loop):
         # called once from app startup with the running event loop; spawns the two always-on workers
@@ -59,6 +64,13 @@ class LiveLoop:
         # the most recent raw BGR frame (or None) — the obfuscator segments this
         item = self._latest_frame
         return item[0] if item else None
+
+    def set_hazard(self, value):
+        # break-glass: True unlocks the raw feed on rgb-stream; False re-locks it to the obfuscated view
+        self._hazard = bool(value)
+
+    def hazard(self):
+        return self._hazard
 
     def pause(self):
         self._running = False
@@ -107,6 +119,22 @@ class LiveLoop:
             self._pending_source = None
             return p
 
+    def _broadcast_main(self, seq, i, raw_bgr, raw_uri):
+        # main feed = privacy-obfuscated by default; a hazard unlocks the raw feed. Fail CLOSED: if
+        # obfuscation errors, emit nothing rather than leak raw pixels.
+        if self._hazard:
+            self._emit("rgb", json.dumps({"seq": seq, "index": i, "rgb": raw_uri, "unlocked": True}))
+            return
+        try:
+            obf = self._obfuscator.obfuscate(raw_bgr)
+            ok, buf = cv2.imencode(".jpg", obf, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        except Exception as e:
+            print("OBFUSCATE ERROR", type(e).__name__, e, flush=True)
+            return
+        if ok:
+            uri = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+            self._emit("rgb", json.dumps({"seq": seq, "index": i, "rgb": uri, "unlocked": False}))
+
     def _rgb_run(self):
         # owns the capture; decode + jpeg encode + broadcast rgb. No GPU work, so it holds source fps
         # regardless of what the detection thread or the VLM are doing on the GPU.
@@ -151,10 +179,15 @@ class LiveLoop:
             with self._frame_lock:
                 self._latest_frame = (raw_bgr, seq, i, n_frames)
             ok, buf = cv2.imencode(".jpg", raw_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            if ok:
-                rgb_uri = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
-                self._last_rgb = rgb_uri
-                self._emit("rgb", json.dumps({"seq": seq, "index": i, "rgb": rgb_uri}))
+            if not ok:
+                i += 1
+                continue
+            # the raw jpeg is kept ONLY for the VLM (it must see the real scene to judge hazard) — it is
+            # never put on the wire unless a hazard has unlocked the feed.
+            raw_uri = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+            self._last_rgb = raw_uri
+            if self._clients["rgb"]:
+                self._broadcast_main(seq, i, raw_bgr, raw_uri)
             i += 1
             lag = frame_dt - (time.monotonic() - t0)
             if lag > 0:

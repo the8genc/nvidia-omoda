@@ -19,10 +19,6 @@ export function d4rtWsUrl(): string {
   return `${WS_BASE}/local/d4rt-stream`
 }
 
-export function obfuscatedWsUrl(): string {
-  return `${WS_BASE}/local/obfuscated-stream`
-}
-
 // on-demand VLM description of the latest frame (polled by the banner)
 export function describeUrl(): string {
   return `${API_BASE}/describe`

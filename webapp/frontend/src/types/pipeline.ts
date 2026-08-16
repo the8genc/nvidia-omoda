@@ -24,6 +24,8 @@ export interface RgbMessage {
   seq: number
   index: number
   rgb: string
+  // main feed: false = privacy-obfuscated frame, true = raw frame (a hazard unlocked it). Backend-decided.
+  unlocked?: boolean
 }
 
 export interface LiveContext {
@@ -32,8 +34,6 @@ export interface LiveContext {
   // boxes resolved to the frame actually painted (see commitDisplayedFrame) so the overlay stays coherent
   displayedBoxes: Readonly<Ref<DetectionBox[]>>
   latestRgb: Readonly<Ref<RgbMessage | null>>
-  // privacy view: the latest FastSAM-obfuscated frame as a jpeg data-uri (each segment one colour)
-  latestObfuscated: Readonly<Ref<string | null>>
   running: Readonly<Ref<boolean>>
   commitDisplayedFrame: (seq: number) => void
   pause: () => Promise<void>
@@ -42,8 +42,18 @@ export interface LiveContext {
   toggle: () => void
   setEnabled: (value: boolean) => void
   setBoxesShown: (value: boolean) => void
-  setObfuscatedShown: (value: boolean) => void
   submitSource: (file: File) => Promise<void>
 }
 
 export const LIVE_KEY: InjectionKey<LiveContext> = Symbol('live')
+
+// the VLM scene description + public-hazard flag, provided once at the app root and consumed by the
+// banner (to display) and the main feed (to decide obfuscated-vs-raw)
+export interface SceneContext {
+  text: Readonly<Ref<string | null>>
+  danger: Readonly<Ref<boolean>>
+  pending: Readonly<Ref<boolean>>
+  reset: () => void
+}
+
+export const SCENE_KEY: InjectionKey<SceneContext> = Symbol('scene')

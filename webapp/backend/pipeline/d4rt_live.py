@@ -7,6 +7,13 @@ import time
 # realtime_d4rt (the standalone reconstruction package) and the Open-d4rt model live outside the
 # webapp; these are the DGX paths (the only place with the 13GB checkpoint). Override via env if moved.
 RD4RT_PATH = os.environ.get("RD4RT_PATH", "/work/realtime_d4rt")
+# to `import realtime_d4rt` (the package dir), its PARENT must be on the path, not the dir itself.
+# Done at import so the worker thread's `from realtime_d4rt import ...` resolves (a missing dir here is
+# harmless — the actual imports are lazy and only run on the DGX where the model exists).
+_RD4RT_PARENT = os.path.dirname(RD4RT_PATH.rstrip("/"))
+if _RD4RT_PARENT not in sys.path:
+    sys.path.insert(0, _RD4RT_PARENT)
+
 D4RT_REPO = os.environ.get("D4RT_REPO", "/work/Open-d4rt")
 D4RT_CKPT = os.environ.get("D4RT_CKPT", "/work/models/d4rt/opend4rt.ckpt")
 GRID_SIDE = int(os.environ.get("D4RT_GRID", "64"))
@@ -57,8 +64,6 @@ class D4rtLoop:
             self._busy.discard(ws)
 
     def _load_engine(self):
-        if RD4RT_PATH not in sys.path:
-            sys.path.insert(0, RD4RT_PATH)
         # imported here, not at module top: the webapp must import cleanly on a box without the model
         from realtime_d4rt import Engine
 
@@ -70,20 +75,24 @@ class D4rtLoop:
         return engine
 
     def _run(self):
+        import traceback
+
         from realtime_d4rt import PairFeeder, TemporalStabiliser, pack_pair_frame
+
+        # eager load at startup — keep the 13GB engine resident (128GB unified, room to spare) so the
+        # first viewer sees frames immediately rather than waiting ~1-2 min for the load.
+        try:
+            self._engine = self._load_engine()
+        except Exception as e:
+            print("D4RT ENGINE LOAD FAILED", type(e).__name__, e, flush=True)
+            traceback.print_exc()
+            return
 
         while True:
             if not self._clients:
-                # nobody is viewing the point cloud — don't run the model
+                # engine stays resident; just don't reconstruct while nobody is viewing
                 time.sleep(0.1)
                 continue
-            if self._engine is None:
-                try:
-                    self._engine = self._load_engine()
-                except Exception as e:
-                    print("D4RT ENGINE LOAD FAILED", type(e).__name__, e, flush=True)
-                    time.sleep(2.0)
-                    continue
 
             source = str(self._live.current_source())
             stabiliser = TemporalStabiliser(ema_alpha=EMA)

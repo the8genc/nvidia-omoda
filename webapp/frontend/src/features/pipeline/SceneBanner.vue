@@ -1,11 +1,10 @@
 <!-- Concern: thin top banner showing the periodically-polled VLM scene description, with a play/stop control for the whole inference loop | Non-concern: polling/the VLM call and the pause/resume request (composables + backend own that) | IO: () -> banner -->
 <script setup lang="ts">
 import { Flag, Play, SkipForward, Sparkles, Square } from 'lucide-vue-next'
-import { useSceneDescription } from '@/composables/useSceneDescription'
-import { LIVE_KEY } from '@/types/pipeline'
+import { LIVE_KEY, SCENE_KEY } from '@/types/pipeline'
 import { injectStrict } from '@/composables/injectStrict'
 
-const { text, danger, pending, reset } = useSceneDescription()
+const { text, danger, pending, reset } = injectStrict(SCENE_KEY)
 const live = injectStrict(LIVE_KEY)
 
 async function toggleRun(): Promise<void> {

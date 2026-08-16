@@ -6,7 +6,6 @@ import {
   livePauseUrl,
   liveResumeUrl,
   liveSourceUrl,
-  obfuscatedWsUrl,
   rgbWsUrl,
 } from '@/api/config'
 import { useWsJson } from '@/composables/useWsJson'
@@ -59,12 +58,6 @@ export function useLiveStream(enabled: Ref<boolean>): LiveContext {
   const detection = useWsJson(detectionWsUrl, isDetection, detectionEnabled)
   const rgb = useWsJson(rgbWsUrl, isRgb, enabled)
 
-  // the privacy/obfuscated socket connects only while that view is shown; no subscriber => FastSAM idle
-  const wantObfuscated = ref(false)
-  const obfuscatedEnabled = ref(false)
-  watch([enabled, wantObfuscated], ([e, w]) => (obfuscatedEnabled.value = e && w), { immediate: true })
-  const obfuscated = useWsJson(obfuscatedWsUrl, isRgb, obfuscatedEnabled)
-
   const detBySeq = bufferBySeq(detection.latest)
 
   // seq of the rgb frame the browser has actually painted; the overlay aligns to it
@@ -78,7 +71,6 @@ export function useLiveStream(enabled: Ref<boolean>): LiveContext {
     return atOrBefore(detBySeq, displayedSeq.value)?.boxes ?? []
   })
 
-  const latestObfuscated = computed(() => obfuscated.latest.value?.rgb ?? null)
   const connected = computed(() => detection.connected.value || rgb.connected.value)
 
   // play/stop the whole inference loop; server-owned, mirror the confirmed 200
@@ -114,10 +106,6 @@ export function useLiveStream(enabled: Ref<boolean>): LiveContext {
     wantDetection.value = value
   }
 
-  function setObfuscatedShown(value: boolean): void {
-    wantObfuscated.value = value
-  }
-
   async function submitSource(file: File): Promise<void> {
     const form = new FormData()
     form.append('video', file)
@@ -131,7 +119,6 @@ export function useLiveStream(enabled: Ref<boolean>): LiveContext {
     connected,
     displayedBoxes,
     latestRgb: rgb.latest,
-    latestObfuscated,
     running: readonly(running),
     commitDisplayedFrame,
     pause,
@@ -140,7 +127,6 @@ export function useLiveStream(enabled: Ref<boolean>): LiveContext {
     toggle,
     setEnabled,
     setBoxesShown,
-    setObfuscatedShown,
     submitSource,
   }
 }
