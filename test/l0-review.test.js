@@ -99,3 +99,24 @@ test("L0 exposes onObservation as a drop-in for the frame path", () => {
   assert.equal(typeof l0.onObservation, "function");
   assert.equal(l0.onObservation, l0.reviewObservation);
 });
+
+test("a dangerous path escalates to the operator; a safe read does not", async () => {
+  // planner proposes a GATED tool -> the operator must be asked
+  const gated = { async complete() { return { text: JSON.stringify({ tool: "dispatch.unit.request", reason: "dispatch EMS to the collision" }), model: MODEL.PLANNER, endpoint: ENDPOINT.HOSTED }; } };
+  const asked = [];
+  const l0 = createOrchestrator({ intents: { awaitConsent() {} }, registry, ledger: ledger(), client: gated, onEscalate: (a) => asked.push(a) });
+  const r = await l0.onIntent({ id: "int-danger", requestedOutcome: "respond to a traffic accident with injuries" });
+  assert.equal(r.routed, true);
+  assert.equal(r.consent, "approval", "a legal-impact create needs approval");
+  assert.equal(asked.length, 1, "the operator was asked before the dangerous action");
+  assert.equal(asked[0].action.tool, "dispatch.unit.request");
+  assert.equal(asked[0].stage, "approval");
+
+  // planner proposes a READ -> no human is bothered
+  const readOnly = { async complete() { return { text: JSON.stringify({ tool: "dispatch.status.read", reason: "check fleet" }), model: MODEL.PLANNER, endpoint: ENDPOINT.HOSTED }; } };
+  const asked2 = [];
+  const l0b = createOrchestrator({ intents: { awaitConsent() {} }, registry, ledger: ledger(), client: readOnly, onEscalate: (a) => asked2.push(a) });
+  const r2 = await l0b.onIntent({ id: "int-safe", requestedOutcome: "check fleet status" });
+  assert.equal(r2.consent, "none");
+  assert.equal(asked2.length, 0, "a safe read does not ask the operator");
+});

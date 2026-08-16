@@ -53,7 +53,7 @@ export function l1FromSignals(signals) {
  * @param {() => boolean} [opts.localAvailable]
  * @param {object} [opts.knowledge] retrieval store for L1 context injection
  */
-export function createOrchestrator({ intents, registry, ledger, client, localAvailable = () => true, knowledge = null, judge = null, bus = null, levelMap = null } = {}) {
+export function createOrchestrator({ intents, registry, ledger, client, localAvailable = () => true, knowledge = null, judge = null, bus = null, levelMap = null, onEscalate = null } = {}) {
   if (!intents || !registry) throw new Error("orchestrator requires intents and the registry");
 
   const record = (entry) => {
@@ -126,6 +126,19 @@ export function createOrchestrator({ intents, registry, ledger, client, localAva
     const stage = consentKind(declared.verb, declared.impact) ?? "none";
     record({ tool: "l0.route", outcome: "routed", reason: `${plan.tool} -> ${stage}`, intentId: intent.id });
     telemetry.message({ actor: "l0", target: declared.agent, intentId: intent.id, detail: { handoff: "capability-selected", tool: plan.tool, consent: stage } });
+
+    // A gated action is only really gated if the human is actually asked. When
+    // the tool needs consent, escalate to the operator (Telegram). A failed send
+    // is recorded, never thrown: the capability stays absent until a decision, so
+    // failing to ask is fail-closed.
+    if (stage !== "none" && onEscalate) {
+      try {
+        await onEscalate({ intent, action, stage });
+        record({ tool: "l0.escalate", outcome: "escalated", reason: `${plan.tool} -> ${stage} (operator asked)`, intentId: intent.id });
+      } catch (err) {
+        record({ tool: "l0.escalate", outcome: "escalation-failed", reason: String(err.message).slice(0, 160), intentId: intent.id });
+      }
+    }
     return { routed: true, tool: plan.tool, agent: declared.agent, consent: stage, actionId: action.actionId };
   }
 
