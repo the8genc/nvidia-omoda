@@ -100,6 +100,22 @@ test("no trigger phrase but a structured signal falls through to the model", asy
   assert.equal(inference.calls.length, 1, "no trigger phrase, so the model inferred");
 });
 
+test("a runtime inference failure degrades, it does not crash the observation handler", async (t) => {
+  const triggers = createTriggerStore({ path: tmp(t), ledger: ledger() });
+  const intents = createIntentStore();
+  // inference that always throws, as a live endpoint-unreachable would
+  const inference = { async complete() { throw new Error("inference unreachable: fetch failed"); } };
+  const judge = createObservationJudge({ intents, ledger: ledger(), inference, triggers });
+  // a strong structured signal, no trigger phrase -> would call the model
+  const strong = obs({ scene_description: "two objects near each other", visible_interactions: [{ contact_visible: true }] });
+  const r1 = await judge.onObservation(strong, []);   // must not throw
+  assert.equal(r1.verdict, "incident", "a strong signal still escalates in degraded mode");
+  // a weak signal -> degrades to nominal, still no throw
+  const weak = obs({ scene_description: "an ambulance is parked nearby" }); // 'ambulance' is a danger-lexicon signal
+  const r2 = await judge.onObservation(weak, []);
+  assert.ok(r2.verdict === "judged-nominal" || r2.verdict === "nominal", "a weak signal degrades to nominal, not a crash");
+});
+
 test("no trigger and no signal is ignored with zero inference", async (t) => {
   const triggers = createTriggerStore({ path: tmp(t), ledger: ledger() });
   const { judge, inference, intents } = judgeWith(triggers);
