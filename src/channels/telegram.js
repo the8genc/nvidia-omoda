@@ -16,6 +16,9 @@
 const ALLOWED_METHODS = new Set([
   "getUpdates", "sendMessage", "answerCallbackQuery",
   "editMessageText", "editMessageReplyMarkup", "getMe",
+  // getFile resolves a voice note for the v4 modality transform. The download
+  // itself is GET /file/bot*/** on the same host; both are in the policy.
+  "getFile",
 ]);
 
 export class TelegramMethodRefused extends Error {
@@ -126,8 +129,24 @@ export function createTelegramClient({ transport, allowedIds = [], parseMode = "
       }
 
       const msg = update.message;
-      if (!msg?.text) return null;
+      if (!msg) return null;
       const from = msg.from?.id;
+
+      // Media before text: a voice note has no .text, and it is an engagement,
+      // not a command. Modality is detected here; the transform happens in the
+      // loop, which holds the inference client.
+      if (!msg.text) {
+        const media = msg.voice ?? msg.audio ?? msg.video_note ?? msg.video;
+        if (!media) return null;
+        if (!isOperator(from)) return { kind: "ignored", reason: "not the registered operator", from };
+        const modality = (msg.voice || msg.audio) ? "voice" : "video";
+        return {
+          kind: "media", modality,
+          fileId: media.file_id, mimeType: media.mime_type ?? null, duration: media.duration ?? null,
+          chatId: msg.chat?.id, from,
+        };
+      }
+
       if (!isOperator(from)) return { kind: "ignored", reason: "not the registered operator", from };
 
       const text = msg.text.trim();

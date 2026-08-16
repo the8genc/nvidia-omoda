@@ -13,6 +13,9 @@ export function createTelegramLoop({
   operator,
   pollTimeoutSec = 25,
   transport,
+  // The v4 modality transform (src/channels/modality.js). Optional: without it
+  // a voice note gets an honest "not configured" reply rather than silence.
+  mediaTransform = null,
 }) {
   if (!client) throw new Error("telegram loop requires a client");
   if (!operator) throw new Error("telegram loop requires an operator identity");
@@ -58,6 +61,52 @@ export function createTelegramLoop({
         intentId: cmd.intentId,
       });
       return { ...cmd, ok: out.ok };
+    }
+
+    if (cmd.kind === "media") {
+      // A voice note is an ENGAGEMENT: it becomes a proposed intent, exactly as
+      // if the transcript had arrived through the API door. The proposer is the
+      // channel identity, not the operator, so the human who spoke can still be
+      // the human who approves; consent stays a distinct recorded act.
+      if (!mediaTransform) {
+        await client.send({ chatId: cmd.chatId, text: "Voice and video need the modality transform, which is not configured on this deployment." });
+        record({ tool: "telegram.media", outcome: "unconfigured", reason: cmd.modality });
+        return { ...cmd, ok: false };
+      }
+      try {
+        const t = await mediaTransform.transform(cmd);
+        const proposer = { id: `telegram:${t.modality}:${cmd.from}`, scopes: ["intent:propose"] };
+        const { intent, duplicate } = intents.propose({
+          idempotencyKey: `tg-media-${cmd.fileId}`,
+          caller: proposer,
+          body: {
+            source: "telegram", kind: "task",
+            evidence: { modality: t.modality, transcript: t.transcript, flags: t.flags, model: t.model },
+            requested_outcome: t.transcript,
+          },
+        });
+        await client.send({
+          chatId: cmd.chatId,
+          text: [
+            `*Heard* (${t.modality}, ${t.latencyMs} ms on the local model):`,
+            `_${t.transcript.slice(0, 400)}_`,
+            t.screened ? `screened: ${t.flags.join(", ")}` : null,
+            ``,
+            `Intent \`${intent.id}\` proposed${duplicate ? " (duplicate delivery, same intent)" : ""}.`,
+          ].filter((x) => x !== null).join("\n"),
+        });
+        record({
+          tool: "telegram.media", outcome: "transcribed",
+          reason: `${t.modality} ${t.bytes}b via ${t.model} (${t.egress})`, intentId: intent.id,
+        });
+        return { ...cmd, ok: true, intentId: intent.id, transcript: t.transcript };
+      } catch (err) {
+        // A refusal is a reply, never silence. The zero-egress case lands here:
+        // local model down means the audio does not leave the box, and we say so.
+        await client.send({ chatId: cmd.chatId, text: `Cannot process that ${cmd.modality}: ${err.message}` });
+        record({ tool: "telegram.media", outcome: "refused", reason: err.message.slice(0, 160) });
+        return { ...cmd, ok: false, reason: err.message };
+      }
     }
 
     if (cmd.kind === "audit") {

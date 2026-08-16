@@ -113,13 +113,16 @@ network_policies:
           # report the channel unreachable even when it works.
           - allow: { method: GET, path: "/bot*/getMe" }
 
-          # ── INBOUND FILES (opt-in, NOT enabled) ─────────────────────────
-          # Uncomment BOTH lines to let the operator send images/files in.
-          # Adds a file-ingress surface; content must be treated as untrusted
-          # and screened by the guard model before reaching planner context
-          # (PRD §17, prompt-injection surface).
-          # - allow: { method: POST, path: "/bot*/getFile" }
-          # - allow: { method: GET,  path: "/file/bot*/**" }
+          # ── INBOUND FILES (enabled 2026-08-16 for the v4 voice door) ─────
+          # The multimodal Telegram interface (PRD 23.1) needs the operator's
+          # voice notes: getFile resolves the file path, the /file download
+          # fetches the bytes. Both stay on api.telegram.org. The conditions the
+          # opt-in note demanded are now met in code, not promised: media is
+          # transcribed ON THE BOX by the local Omni (route() refuses to send it
+          # to a hosted endpoint), and the transcript passes the S8 screen
+          # before it can reach planner context (src/channels/modality.js).
+          - allow: { method: POST, path: "/bot*/getFile" }
+          - allow: { method: GET,  path: "/file/bot*/**" }
 
           # ── DELIBERATELY ABSENT: do not add without a T3 review ──────────
           #   setWebhook / deleteWebhook  -> redirect the approval channel
