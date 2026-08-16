@@ -165,6 +165,38 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   });
   routeIntent = (intent) => orchestrator.onIntent(intent);
 
+  // Demo control: fire a chosen gated tool through the REAL escalation path so a
+  // presenter can show the human gate (a Telegram Approve/Deny) on demand. It
+  // uses the same intent store and escalation hook as a live incident, so the
+  // operator's tap flows back through the normal decide path. Admin-gated.
+  const demo = {
+    configured: () => Boolean(escalateToOperator),
+    gatedTools: () => index.all()
+      .filter((r) => r.consent && r.consent !== "none")
+      .map((r) => ({ tool: r.tool, verb: r.verb, impact: r.impact ?? [], consent: r.consent, agent: r.agent }))
+      .sort((a, b) => a.tool.localeCompare(b.tool)),
+    async trigger(toolName) {
+      if (!escalateToOperator) return { ok: false, reason: "Telegram is not configured (set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_IDS)" };
+      const row = index.lookup(toolName);
+      if (!row) return { ok: false, reason: `unknown tool "${toolName}"` };
+      if (!row.consent || row.consent === "none") return { ok: false, reason: `"${toolName}" is not a gated action; pick one that requires consent` };
+      const { intent } = intents.propose({
+        idempotencyKey: `demo-${toolName}-${Date.now()}`,
+        caller: { id: "admin:demo", scopes: ["intent:propose"] },
+        body: { source: "admin-demo", kind: "demo", detector: "admin dashboard (demo)", requested_outcome: `DEMO dangerous action: ${toolName}` },
+      });
+      const action = {
+        actionId: `demo-${Date.now().toString(36)}`, intentId: intent.id,
+        agent: row.agent, tool: row.tool, verb: row.verb, impact: row.impact ?? [],
+        declared: true, reason: "admin demo: exercise the human gate",
+      };
+      intents.awaitConsent(intent.id, action);
+      try { ledger.append({ kind: "demo", agent: "admin:demo", tool: row.tool, verb: row.verb, impact: row.impact ?? [], intentId: intent.id, outcome: "escalated", reason: `demo escalation -> ${row.consent}` }); } catch { /* best effort */ }
+      await escalateToOperator({ intent, action });
+      return { ok: true, tool: row.tool, consent: row.consent, intentId: intent.id };
+    },
+  };
+
   const app = createApp({
     tokens, ledger, intents,
     nonces: createNonceCache(),
@@ -174,6 +206,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     knowledge,
     triggers,
     training,
+    demo,
     l1Agents: [...new Set(skills.filter((sk) => sk.level === 1).map((sk) => sk.agent))],
   });
 

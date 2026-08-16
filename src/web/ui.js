@@ -76,6 +76,7 @@ function Layout({ title, active, children }) {
           h("a", { href: "/ui/ledger", className: active === "ledger" ? "on" : "" }, "Ledger"),
           h("a", { href: "/ui/audit", className: active === "audit" ? "on" : "" }, "Audit"),
           h("a", { href: "/ui/training", className: active === "training" ? "on" : "" }, "Training"),
+          h("a", { href: "/ui/demo", className: active === "demo" ? "on" : "" }, "Demo"),
           h("a", { href: "/ui/agents/new", className: active === "deploy" ? "on" : "" }, "Deploy agent"),
           h("a", { href: "/ui/knowledge", className: active === "knowledge" ? "on" : "" }, "Knowledge"),
           h("a", { href: "/ui/triggers", className: active === "triggers" ? "on" : "" }, "Triggers"),
@@ -229,6 +230,48 @@ export function TrainingPage({ csrf, status, added = null, stopped = null }) {
     h("p", { className: "note" },
       "Borderline rows are the richest for tuning: signals fired but no trigger word matched, ",
       "so they surface phrases worth adding. Feed footage that describes hazards in new words to grow this set."),
+  );
+}
+
+/**
+ * The demo page: fire a real Telegram Approve/Deny for a chosen gated tool, to
+ * show the human gate live. It runs the actual escalation path (intent ->
+ * awaitConsent -> telegramClient.escalate), so the operator's tap flows back
+ * through the normal decide path. The action is a demo; the consent is real.
+ */
+export function DemoPage({ csrf, gated = [], configured = true, sent = null, error = null }) {
+  return h(Layout, { title: "demo", active: "demo" },
+    h("h2", null, "Trigger a dangerous action  ",
+      configured ? pill("Telegram ready", "ok") : pill("Telegram not configured", "bad")),
+    h("p", { className: "note" },
+      "Sends a real Approve/Deny to the operator's phone for a chosen gated tool, through the same ",
+      "escalation path a live incident uses. The write stays absent from policy until you tap. ",
+      "Use it to show OpenShell-protected actions in real time."),
+    error ? h("div", { className: "err" }, error) : null,
+    sent ? h("div", { className: "okbox" },
+      `Sent to the operator. \`${sent.tool}\` (${sent.consent}) is awaiting a tap. intent: ${sent.intentId}`) : null,
+    !configured
+      ? h("div", { className: "empty" }, "Telegram is not configured on this deployment, so no approval can be sent. Set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_IDS.")
+      : gated.length === 0
+        ? h("div", { className: "empty" }, "No gated tools are declared.")
+        : h("form", { className: "stack", method: "post", action: "/ui/demo/trigger" },
+          h("input", { type: "hidden", name: "csrf", value: csrf }),
+          h("label", { htmlFor: "tool" }, "Gated tool to escalate"),
+          h("select", { id: "tool", name: "tool" },
+            gated.map((g) => h("option", { key: g.tool, value: g.tool },
+              `${g.tool}  —  ${g.verb}${g.impact.length ? " [" + g.impact.join("+") + "]" : ""}  →  ${g.consent}`))),
+          h("button", { type: "submit" }, "Send Approve/Deny to Telegram")),
+    h("h2", null, "The gated tools"),
+    h("table", null,
+      h("thead", null, h("tr", null, ["Tool", "Verb", "Impact", "Consent", "Agent"].map((c) => h("th", { key: c }, c)))),
+      h("tbody", null, gated.map((g) =>
+        h("tr", { key: g.tool },
+          h("td", { className: "mono" }, g.tool),
+          h("td", null, g.verb),
+          h("td", { className: "small" }, g.impact.join("+") || "-"),
+          h("td", null, g.consent === "two-person" ? pill("two-person", "bad") : pill(g.consent, "warn")),
+          h("td", null, g.agent)))),
+    ),
   );
 }
 
