@@ -58,7 +58,8 @@ run_smoke() {
   APASS="${OMODA_ADMIN_PASS:-$(grep -s '^OMODA_ADMIN_PASS=' .env | cut -d= -f2-)}"; APASS="${APASS:-SparkDo-OMODA-2026}"
   c=$(code -u "$AUSER:$APASS" "http://$HOST:$PORT/ui"); [ "$c" = 200 ] && pass "GET /ui with admin credential -> 200" || fail "GET /ui authenticated -> $c"
   c=$(code -u "$AUSER:$APASS" "http://$HOST:$PORT/ui/agents/new"); [ "$c" = 200 ] && pass "GET /ui/agents/new 200 (deploy flow up)" || fail "GET /ui/agents/new -> $c"
-  c=$(code "http://$HOST:$STREAM_PORT/");        [ "$c" = 426 ] && pass "stream 426 (upgrade required)" || fail "stream $c (want 426)"
+  SHOST="${OMODA_STREAM_HOST:-$(grep -s '^OMODA_STREAM_HOST=' .env | cut -d= -f2-)}"; SHOST="${SHOST:-$HOST}"
+  c=$(code "http://$SHOST:$STREAM_PORT/");       [ "$c" = 426 ] && pass "stream 426 on $SHOST (upgrade required)" || fail "stream on $SHOST -> $c (want 426)"
 
   # 3. auth is enforced: a privileged read with no token must be refused, not served
   c=$(code "http://$HOST:$PORT/v1/ledger");      [ "$c" = 401 ] || [ "$c" = 403 ] && pass "GET /v1/ledger without token -> $c (refused)" || fail "GET /v1/ledger unauthenticated -> $c (want 401/403)"

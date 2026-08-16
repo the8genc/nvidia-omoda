@@ -37,6 +37,9 @@ loadEnvFile();
 const PORT = Number(process.env.OMODA_PORT ?? 3110);
 const STREAM_PORT = Number(process.env.OMODA_STREAM_PORT ?? 3111);
 const HOST = process.env.OMODA_HOST ?? "127.0.0.1";
+// The stream door may bind its own address: partners connect to it from other
+// machines (tailnet), while the API/UI stay loopback unless deliberately opened.
+const STREAM_HOST = process.env.OMODA_STREAM_HOST ?? HOST;
 const SANDBOX = process.env.OMODA_SANDBOX ?? null;
 
 async function execCli(cmd, args, input) {
@@ -52,9 +55,9 @@ async function execCli(cmd, args, input) {
   });
 }
 
-export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST, sandbox = SANDBOX, print = true } = {}) {
+export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST, streamHost = STREAM_HOST, sandbox = SANDBOX, print = true } = {}) {
   assertBindable(port, host);
-  assertBindable(streamPort, host);
+  assertBindable(streamPort, streamHost);
 
   const { skills, errors } = loadSkills();
   if (errors.length) {
@@ -115,7 +118,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   const { createServer } = await import("node:http");
   const streamServer = createServer((_req, res) => { res.writeHead(426); res.end("upgrade required"); });
   await attachStreamServer({ server: streamServer, ingest });
-  await new Promise((r) => streamServer.listen(streamPort, host, r));
+  await new Promise((r) => streamServer.listen(streamPort, streamHost, r));
 
   // Outbound client mode (PRD 23.1): dial a stream that is already pushing
   // JSON. Host service only; frames enter the same ingest path as inbound,
@@ -163,7 +166,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line("OMODA is up.");
     line(`  API     http://${host}:${port}`);
     line(`  UI      http://${host}:${port}/ui`);
-    line(`  stream  ws://${host}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}` : ""}`);
+    line(`  stream  ws://${streamHost}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}` : ""}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
     line(`  rag     ${knowledge.backend} (${knowledge.size} document(s))`);
     line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
