@@ -1150,13 +1150,39 @@ applied at the service seam. A read (`GET /api/dispatch/**`, fleet or call statu
 reversible write (`POST /api/roads/workorders`) runs autonomously with an UNDO. A
 consequential write that puts something in the real world under our name is held:
 
-| route | backing tool | consent |
-|---|---|---|
-| `POST /api/dispatch` | dispatch.unit.request | approval |
-| `DELETE /api/dispatch/{call_id}` | dispatch.callout.cancel | two-person |
-| `POST /api/incidents` | incident.record.create | approval |
-| `DELETE /api/incidents/{id}` | incident.record.retract | two-person |
-| `POST /api/notify` | supervisor.notify | review |
+| route | backing tool | impact | consent |
+|---|---|---|---|
+| `POST /api/dispatch` | dispatch.unit.request | legal | approval |
+| `DELETE /api/dispatch/{call_id}` | dispatch.callout.cancel | legal + reputational | two-person |
+| `POST /api/incidents` | incident.record.create | legal | approval |
+| `DELETE /api/incidents/{id}` | incident.record.retract | legal + reputational | two-person |
+| `POST /api/notify` | supervisor.notify | reputational | review |
+| `POST /api/procurement/callouts` | procurement.callout.authorize | financial | approval |
+| `DELETE /api/procurement/callouts/{id}` | procurement.callout.cancel | financial + legal | two-person |
+| `PUT /api/utility/power/deenergize` | utility.power.deenergize | legal + reputational | approval |
+| `PUT /api/utility/gas/shutoff` | utility.gas.shutoff | legal | approval |
+| `POST /api/evidence/clips` | evidence.clip.export | legal | approval |
+| `DELETE /api/evidence/clips/{id}` | evidence.clip.retract | legal + reputational | two-person |
+| `POST /api/comms/advisories` | comms.advisory.post | reputational | review |
+| `POST /api/comms/reverse911` | comms.reverse911.send | legal + reputational | approval |
+
+The five service domains are built to cover the taxonomy end to end:
+**dispatch/incidents** (create/delete + legal), **procurement** (the `financial`
+impact domain: authorizing a private crane or hazmat vendor spends public money),
+**utility** (the `update` verb: de-energizing a block or shutting off gas is a
+change to a live grid state, PUT-gated the same way a POST is), **surveillance**
+(privacy-weighted legal writes plus a contained camera update), and **comms** (the
+review -> approval ladder on one resource). The reversible writes
+(`utility.power.restore`, `camera.ptz.control`, `roadside.workorder.*`) run
+autonomously with an UNDO.
+
+Four capabilities have **no decision path at all**, refused before any policy
+check: `utility.grid.blackout` (city-wide cut), `camera.facial_recognition`
+(biometric tracking), `evidence.public_release` (public footage dump), and
+`comms.city_alert` / `dispatch.mass_broadcast`. Each has a governed cousin one rung
+down that DOES have a path; the extreme has none. For a platform that watches a
+city on CCTV, foreclosing biometric tracking and public footage release
+structurally, rather than by policy the operator could approve away, is the point.
 
 ### 26.1 The boundary cannot drift
 
@@ -1189,3 +1215,26 @@ service layer. The full path from a CCTV observation to a governed call
 - Every manifest's egress points at `:3120`; the `incident-response` responder is
   wired through it alongside the emergency and roadside agents.
 - The planner renders the endpoint and gate per tool (`src/models/plan.js`).
+
+### 26.4 The expanded showcase roster (2026-08-16)
+
+Ten agents added to cover the taxonomy gaps, each a robust `omoda.skill.md` with a
+prose body naming its endpoints and protection:
+
+- **Procurement / finance:** L2 `procurement` (vendor reads) + L3
+  `procurement-gateway` (authorize spend: create+financial -> approval; cancel a
+  paid contract: delete+financial+legal -> two-person).
+- **Utility / infrastructure:** L1 `utility` + L2 `utility-ops` (grid read,
+  contained power restore) + L3 `utility-control` (de-energize / gas shutoff:
+  update+legal -> approval).
+- **Surveillance / evidence:** L2 `evidence-desk` (contained camera PTZ, clip
+  status) + L3 `surveillance-ops` (export: create+legal -> approval; retract:
+  delete+legal+reputational -> two-person).
+- **Public-safety comms:** L1 `comms` + L2 `public-info` (channel read) + L3
+  `notify-gateway` (advisory: review; reverse-911: approval).
+
+Trigger phrases route infrastructure hazards to `utility` and public-warning
+language to `comms` (`src/transport/triggers.js`); the accident and fire response
+plans (`src/domain/response-plan.js`) escalate to procurement (crane / hazmat) and
+evidence (footage export). New prohibited beats live in `src/domain/prohibited.js`:
+`no-grid-blackout`, `no-biometric-surveillance`, `no-surveillance-public-release`.

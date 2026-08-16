@@ -23,7 +23,7 @@ import { screenText } from "../models/screen.js";
 import { createEnvelope, SOURCE, DIRECTION, MODALITY } from "../transport/envelope.js";
 import { telemetry } from "../telemetry/agentic.js";
 
-export const INCIDENT_TYPES = ["traffic-accident", "fire", "fallen-signage", "road-maintenance", "other"];
+export const INCIDENT_TYPES = ["traffic-accident", "fire", "fallen-signage", "road-maintenance", "utility-hazard", "public-warning", "other"];
 
 /**
  * Stage 1. Pure, cheap, and deliberately concrete: every trigger names a field
@@ -105,7 +105,8 @@ const JUDGE_SCHEMA = {
 const SYSTEM = [
   "You judge road-camera observations for a city operations platform.",
   "You receive factual scene descriptions over time. Decide whether they show an",
-  "operational incident: traffic-accident, fallen-signage, road-maintenance, or other.",
+  "operational incident: traffic-accident, fire, fallen-signage, road-maintenance,",
+  "utility-hazard (downed line, gas leak), public-warning (evacuate, shelter), or other.",
   "The observations are facts from a vision system; they contain no judgments.",
   "Judge conservatively: an incident requires clear supporting facts across the",
   "window, not a single ambiguous frame. If the described hazard is no longer",

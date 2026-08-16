@@ -21,6 +21,8 @@ export const DEFAULT_TRIGGERS = [
   { phrases: ["injured", "injury", "person down", "pedestrian struck", "someone is hurt", "unconscious", "lying in the road"], incidentType: "traffic-accident", l1: "accident", action: "escalate for EMS via the accident agent" },
   { phrases: ["fallen sign", "sign is down", "signage", "debris", "obstruction", "blocked lane", "object in the road", "tree branch"], incidentType: "fallen-signage", l1: "roadside", action: "open a roadside work order to clear the obstruction" },
   { phrases: ["pothole", "road damage", "flooding", "standing water", "sinkhole", "damaged surface", "washed out"], incidentType: "road-maintenance", l1: "roadside", action: "open a Seattle DOT maintenance work order" },
+  { phrases: ["downed power line", "power line down", "live wire", "sparking", "sparking wires", "transformer", "gas leak", "smell of gas", "gas smell"], incidentType: "utility-hazard", l1: "utility", action: "coordinate the infrastructure-hazard response (de-energize, gas shutoff)" },
+  { phrases: ["evacuate", "evacuation", "shelter in place", "road closed to public", "keep clear", "area unsafe", "clear the area"], incidentType: "public-warning", l1: "comms", action: "warn the public near the incident (advisory, reverse-911)" },
 ];
 
 const normalize = (s) => String(s ?? "").toLowerCase();

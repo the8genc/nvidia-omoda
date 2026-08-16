@@ -35,8 +35,11 @@ test("narrateResponse walks the whole org chart for an incident, L0 down to the 
   assert.match(headlines, /accident domain expert \(L1\) handed off to the ambulatory worker \(L2\)/);
   assert.match(headlines, /ambulatory worker \(L2\) handed off to the emergency dispatch tool specialist \(L3\).*human approval/s);
   assert.ok(flow.every((e) => e.intentId === "int_1"), "every hop carries the incident it belongs to");
-  // the dangerous 911 hops are flagged
-  assert.equal(flow.filter((e) => e.dangerous).length, 2, "both 911 calls are dangerous");
+  // the accident chain escalates the two 911 calls plus the crane spend and the
+  // evidence export, four governed hops in all
+  assert.equal(flow.filter((e) => e.dangerous).length, 4, "the 911 calls, the crane callout, and the evidence export are all held");
+  assert.match(headlines, /handed off to the procurement worker \(L2\) to line up a crane/);
+  assert.match(headlines, /export the collision footage as evidence.*human approval/s);
 });
 
 test("the fire flow routes through the fire department and shared ambulatory", () => {

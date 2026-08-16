@@ -129,6 +129,71 @@ test("notifying a supervisor is a governed write and delivers", async () => {
   assert.ok(body.notice_id.startsWith("NTF-"));
 });
 
+test("procurement is the financial beat: authorize is approval, cancel is two-person", async () => {
+  const svc = createCityServices({ registry });
+  const { body: cat } = await call(svc, "GET", "/api/catalog");
+  const byPath = Object.fromEntries(cat.routes.map((r) => [`${r.method} ${r.path}`, r]));
+  assert.equal(byPath["POST /api/procurement/callouts"].consent, "approval");
+  assert.equal(byPath["POST /api/procurement/callouts"].impact.includes("financial"), true, "financial impact domain is exercised");
+  assert.equal(byPath["DELETE /api/procurement/callouts/{id}"].consent, "two-person");
+  // authorize returns a running cost and marks itself dangerous
+  const po = (await call(svc, "POST", "/api/procurement/callouts", { vendor_id: "V-CRANE-1", need: "lift" })).body;
+  assert.equal(po.dangerous, true);
+  assert.equal(po.rate_per_hour, 1200);
+  assert.ok(po.callout_id.startsWith("PO-"));
+  const cancel = (await call(svc, "DELETE", `/api/procurement/callouts/${po.callout_id}`)).body;
+  assert.equal(cancel.status, "cancelled");
+  assert.equal(cancel.dangerous, true);
+  assert.ok(cancel.cancellation_fee > 0);
+});
+
+test("utility exercises the update verb: de-energize is approval, restore is contained", async () => {
+  const svc = createCityServices({ registry });
+  const { body: cat } = await call(svc, "GET", "/api/catalog");
+  const byPath = Object.fromEntries(cat.routes.map((r) => [`${r.method} ${r.path}`, r]));
+  assert.equal(byPath["PUT /api/utility/power/deenergize"].verb, "update");
+  assert.equal(byPath["PUT /api/utility/power/deenergize"].consent, "approval");
+  assert.equal(byPath["PUT /api/utility/power/restore"].openshell_protected, false, "restore is a contained update");
+  // de-energize flips grid state and is dangerous; restore brings it back and is not
+  const off = (await call(svc, "PUT", "/api/utility/power/deenergize", { segment: "GRID-7" })).body;
+  assert.equal(off.energized, false);
+  assert.equal(off.dangerous, true);
+  const on = (await call(svc, "PUT", "/api/utility/power/restore", { segment: "GRID-7" })).body;
+  assert.equal(on.energized, true);
+  assert.equal(on.dangerous, false);
+});
+
+test("surveillance draws the privacy line: ptz contained, export approval, retract two-person", async () => {
+  const svc = createCityServices({ registry });
+  const { body: cat } = await call(svc, "GET", "/api/catalog");
+  const byPath = Object.fromEntries(cat.routes.map((r) => [`${r.method} ${r.path}`, r]));
+  assert.equal(byPath["PUT /api/cameras/ptz"].openshell_protected, false, "steering a camera is contained");
+  assert.equal(byPath["POST /api/evidence/clips"].consent, "approval");
+  assert.equal(byPath["DELETE /api/evidence/clips/{id}"].consent, "two-person");
+  const ptz = (await call(svc, "PUT", "/api/cameras/ptz", { camera_id: "CAM-1", pan: 30 })).body;
+  assert.equal(ptz.dangerous, false);
+  const clip = (await call(svc, "POST", "/api/evidence/clips", { camera_id: "CAM-1" })).body;
+  assert.equal(clip.dangerous, true);
+  assert.match(clip.chain_of_custody, /custody/);
+  const ret = (await call(svc, "DELETE", `/api/evidence/clips/${clip.clip_id}`)).body;
+  assert.equal(ret.status, "retracted");
+  assert.equal(ret.dangerous, true);
+});
+
+test("comms is the review -> approval ladder: advisory reviews, reverse-911 approves", async () => {
+  const svc = createCityServices({ registry });
+  const { body: cat } = await call(svc, "GET", "/api/catalog");
+  const byPath = Object.fromEntries(cat.routes.map((r) => [`${r.method} ${r.path}`, r]));
+  assert.equal(byPath["POST /api/comms/advisories"].consent, "review");
+  assert.equal(byPath["POST /api/comms/reverse911"].consent, "approval");
+  const adv = (await call(svc, "POST", "/api/comms/advisories", { area: "Pike/Pine" })).body;
+  assert.equal(adv.status, "posted");
+  assert.equal(adv.dangerous, true, "a review is still human-gated");
+  const r911 = (await call(svc, "POST", "/api/comms/reverse911", { zone: "Z1", action: "evacuate" })).body;
+  assert.equal(r911.status, "sent");
+  assert.ok(r911.recipients > 0);
+});
+
 test("unknown routes 404 with a hint", async () => {
   const svc = createCityServices({ registry });
   const { status, body } = await call(svc, "GET", "/api/nope");
