@@ -17,6 +17,8 @@ import { createOpenShellPolicy } from "./policy/openshell.js";
 import { fragmentToYaml } from "./policy/compile.js";
 import { createTelegramClient, createHttpTransport } from "./channels/telegram.js";
 import { createTelegramLoop } from "./channels/telegram-loop.js";
+import { createModalityTransform } from "./channels/modality.js";
+import { createInferenceClient } from "./models/client.js";
 import { readFileSync, existsSync } from "node:fs";
 
 /** Minimal .env reader. Avoids depending on a --env-file flag being available. */
@@ -130,7 +132,13 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
   } else if (tgToken) {
     const transport = createHttpTransport({ token: tgToken });
     telegramClient = createTelegramClient({ transport, allowedIds: tgIds });
-    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport });
+    // The v4 voice door: a voice note is downloaded to the box and transcribed
+    // by the LOCAL Omni; route() inside the transform is what guarantees the
+    // audio never goes to a hosted endpoint.
+    const mediaTransform = createModalityTransform({
+      transport, token: tgToken, inference: createInferenceClient({ timeoutMs: 180_000 }),
+    });
+    telegram = createTelegramLoop({ client: telegramClient, intents, ledger, policy, operator, transport, mediaTransform });
     telegram.start().catch((err) => console.error(`telegram loop stopped: ${err.message}`));
   }
 
@@ -142,7 +150,7 @@ export async function boot({ port = PORT, streamPort = STREAM_PORT, host = HOST,
     line(`  UI      http://${host}:${port}/ui`);
     line(`  stream  ws://${host}:${streamPort}/v1/stream${dialUrl ? ` + dialing ${dialUrl}` : ""}`);
     line(`  policy  ${sandbox ? `openshell sandbox "${sandbox}"` : "in-process envelope (no sandbox configured)"}`);
-    line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}]` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
+    line(`  tg      ${telegram ? `live, operator ids [${tgIds.join(",")}], voice via local Omni` : tgToken ? "configured but IDLE (no allowlist)" : "not configured"}`);
     line("");
     line(`  skills  ${skills.map((s) => s.skill).join(", ") || "none"}`);
     line(`  tools   ${index.size} declared; anything else is denied`);
